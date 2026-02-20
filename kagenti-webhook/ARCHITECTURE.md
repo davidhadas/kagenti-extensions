@@ -130,23 +130,60 @@ graph TD
     START[Webhook Receives<br/>Admission Request]
 
     CHECK_TYPE{kagenti.io/type<br/>= agent or tool?}
-    CHECK_INJECT{kagenti.io/inject<br/>= enabled?}
-    CHECK_SPIRE{kagenti.io/spire<br/>= enabled?}
 
-    INJECT_FULL[Inject: proxy-init<br/>envoy-proxy, spiffe-helper<br/>client-registration]
-    INJECT_BASIC[Inject: proxy-init<br/>envoy-proxy only]
+    subgraph "AuthBridge Path (Recommended)"
+        WORKLOAD[Standard Workload<br/>Deploy/STS/DS/Job]
+        CHECK_NS_AB{Namespace has<br/>kagenti-enabled=true?}
+        CHECK_LABEL{Pod has<br/>kagenti.io/inject=enabled}
+        INJECT_FULL[Inject all sidecars<br/>per precedence chain<br/>proxy-init, envoy-proxy,<br/>spiffe-helper, client-registration]
+    end
+
+    subgraph "Legacy Path (Deprecated)"
+        CUSTOM[Custom Resource<br/>Agent/MCPServer CR]
+        CHECK_NS_LEG{Namespace has<br/>kagenti-enabled=true?}
+        CHECK_ANNO{CR has<br/>kagenti.io/inject=enabled?}
+        INJECT_SPIRE[Inject: spiffe-helper<br/>client-registration]
+    end
+
     SKIP[Skip Injection]
 
     START --> CHECK_TYPE
-    CHECK_TYPE -->|No| SKIP
-    CHECK_TYPE -->|Yes| CHECK_INJECT
-    CHECK_INJECT -->|enabled| CHECK_SPIRE
-    CHECK_INJECT -->|other / missing| SKIP
+    CHECK_TYPE -->|Workload| WORKLOAD
+    CHECK_TYPE -->|CR| CUSTOM
 
-    CHECK_SPIRE -->|Yes| INJECT_FULL
-    CHECK_SPIRE -->|No| INJECT_BASIC
+    WORKLOAD --> CHECK_NS_AB
+    CHECK_NS_AB -->|Yes| CHECK_LABEL
+    CHECK_NS_AB -->|No| SKIP
+    CHECK_LABEL -->|true| INJECT_FULL
+    CHECK_LABEL -->|false| SKIP
+    CHECK_LABEL -->|not set & ns=true| INJECT_FULL
+    CHECK_LABEL -->|not set & ns=false| SKIP
+
+    CUSTOM --> CHECK_NS_LEG
+    CHECK_NS_LEG -->|Yes| CHECK_ANNO
+    CHECK_NS_LEG -->|No| CHECK_ANNO
+    CHECK_ANNO -->|true| INJECT_SPIRE
+    CHECK_ANNO -->|false| SKIP
+    CHECK_ANNO -->|not set & ns=true| INJECT_SPIRE
+    CHECK_ANNO -->|not set & ns=false| SKIP
 
     style INJECT_FULL fill:#32CD32
-    style INJECT_BASIC fill:#4169E1
-    style SKIP fill:#D3D3D3
+    style INJECT_SPIRE fill:#D3D3D3,stroke:#808080,stroke-dasharray: 5 5
+    style WORKLOAD fill:#87CEEB
+    style CUSTOM fill:#D3D3D3,stroke:#808080,stroke-dasharray: 5 5
+```
+
+## Key Differences
+
+| Aspect | AuthBridge (Recommended) | Legacy (Deprecated) |
+|--------|--------------------------|---------------------|
+| **Resources** | Standard K8s workloads | Custom Resources |
+| **Injection Control** | Pod labels | CR annotations |
+| **SPIRE** | Injected by default; opt out via `kagenti.io/spire: disabled` | Always enabled |
+| **Containers** | Init: proxy-init<br/>Sidecars: envoy-proxy, spiffe-helper, client-registration | Sidecars: spiffe-helper, client-registration |
+| **Traffic Management** | ✅ Envoy proxy with iptables | ❌ No proxy |
+| **Authentication** | Multiple methods (SPIRE, mTLS, JWT, etc.) | SPIRE only |
+| **Method** | `InjectAuthBridge()` | `MutatePodSpec()` |
+
+spiffe-helper is injected by default; set `kagenti.io/spire: disabled` on the pod template to opt out.
 ```

@@ -14,6 +14,9 @@ import (
 //  4. Workload label (kagenti.io/<sidecar>-inject=false)
 //  5. TokenExchange CR override (stub — not yet implemented)
 //  6. Platform defaults (sidecars.<sidecar>.enabled)
+//
+// spiffe-helper additionally evaluates a 7th layer after the standard chain:
+//  7. SPIRE opt-out label (kagenti.io/spire=disabled blocks injection)
 type PrecedenceEvaluator struct {
 	featureGates   *config.FeatureGates
 	platformConfig *config.PlatformConfig

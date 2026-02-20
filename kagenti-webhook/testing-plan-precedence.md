@@ -20,17 +20,13 @@ You should see log lines confirming both configs loaded successfully.
 
 ## Test 2: Baseline — All Sidecars Injected (default)
 
-With all gates enabled and namespace opted in, a workload with `kagenti.io/type=agent` should get all sidecars.
-
-> **Note**: `spiffe-helper` requires the `kagenti.io/spire=enabled` label on the workload
-> in addition to passing the precedence chain. Without it, spiffe-helper is skipped
-> even though the precedence evaluator says "inject".
+With all gates enabled and namespace opted in, a workload with `kagenti.io/type=agent` should get all sidecars — including `spiffe-helper` — without any additional labels.
 
 ```bash
 # Ensure namespace is opted in
 kubectl label namespace team1 kagenti-enabled=true --overwrite
 
-# Deploy a test workload (with SPIRE label to get all sidecars including spiffe-helper)
+# Deploy a test workload — no SPIRE label needed; spiffe-helper is injected by default
 kubectl apply -n team1 -f - <<'EOF'
 apiVersion: apps/v1
 kind: Deployment
@@ -48,7 +44,6 @@ spec:
       labels:
         app: test-all-sidecars
         kagenti.io/type: agent
-        kagenti.io/spire: "enabled"
     spec:
       containers:
       - name: app

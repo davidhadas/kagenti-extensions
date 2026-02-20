@@ -11,9 +11,10 @@ set -euo pipefail
 
 NS="${1:-team1}"
 WEBHOOK_NS="kagenti-webhook-system"
+CLUSTER="${CLUSTER:-kagenti}"
 FG_CM="kagenti-webhook-feature-gates"
 WAIT_SECS=12
-HOTRELOAD_MAX_WAIT=120  # Kubernetes ConfigMap volume propagation can take up to 1-2 minutes
+HOTRELOAD_MAX_WAIT=30   # Reduced from 120s because kubelet syncFrequency is set to 10s during tests
 
 # Container names (must match Go constants)
 ENVOY="envoy-proxy"
@@ -43,6 +44,53 @@ pass() { echo -e "  ${GREEN}PASS${NC} $*"; PASS=$((PASS+1)); RESULTS+=("PASS  $*
 fail() { echo -e "  ${RED}FAIL${NC} $*"; FAIL=$((FAIL+1)); RESULTS+=("FAIL  $*"); }
 skip() { echo -e "  ${YELLOW}SKIP${NC} $*"; SKIP=$((SKIP+1)); RESULTS+=("SKIP  $*"); }
 separator() { echo -e "${BOLD}────────────────────────────────────────────────────${NC}"; }
+
+# Speed up kubelet ConfigMap volume sync to 10s.
+# Patches the kubelet-config ConfigMap via kubectl, then pipes the updated
+# config to the node using tee (no direct YAML file editing).
+# Requires: jq
+speed_up_kubelet() {
+  log "Setting kubelet syncFrequency=10s via kubelet-config ConfigMap patch..."
+
+  # 1. Patch the ConfigMap: strip any existing syncFrequency, append 10s
+  kubectl get configmap kubelet-config -n kube-system -o json \
+    | jq '.data.kubelet |= (split("\n")
+        | map(select(startswith("syncFrequency:") | not))
+        + ["syncFrequency: 10s"]
+        | join("\n"))' \
+    | kubectl apply -f -
+
+  # 2. Write the updated config to the node and restart kubelet
+  kubectl get configmap kubelet-config -n kube-system \
+    -o jsonpath='{.data.kubelet}' \
+    | docker exec -i "${CLUSTER}-control-plane" tee /var/lib/kubelet/config.yaml >/dev/null
+  docker exec "${CLUSTER}-control-plane" systemctl restart kubelet
+
+  sleep 5
+  log "Kubelet restarted with syncFrequency=10s"
+}
+
+# Reset kubelet syncFrequency to default by removing the override from the
+# kubelet-config ConfigMap and syncing back to the node.
+reset_kubelet() {
+  log "Resetting kubelet syncFrequency to default via kubelet-config ConfigMap patch..."
+
+  # 1. Remove syncFrequency from the ConfigMap
+  kubectl get configmap kubelet-config -n kube-system -o json \
+    | jq '.data.kubelet |= (split("\n")
+        | map(select(startswith("syncFrequency:") | not))
+        | join("\n"))' \
+    | kubectl apply -f -
+
+  # 2. Write the restored config to the node and restart kubelet
+  kubectl get configmap kubelet-config -n kube-system \
+    -o jsonpath='{.data.kubelet}' \
+    | docker exec -i "${CLUSTER}-control-plane" tee /var/lib/kubelet/config.yaml >/dev/null
+  docker exec "${CLUSTER}-control-plane" systemctl restart kubelet
+
+  sleep 5
+  log "Kubelet reset to default syncFrequency"
+}
 
 # Deploy a test workload. Extra args are additional label lines (already indented).
 deploy() {
@@ -168,21 +216,32 @@ echo ""
 
 log "Namespace: ${NS}"
 log "Webhook namespace: ${WEBHOOK_NS}"
+log "Kind cluster: ${CLUSTER}"
 echo ""
 
 # Ensure namespace is opted in
 kubectl label namespace "${NS}" kagenti-enabled=true --overwrite >/dev/null 2>&1
 log "Namespace ${NS} labelled kagenti-enabled=true"
 
-# Ensure feature gates are all enabled at start
+# Ensure feature gates are all enabled at start.
+# Must run BEFORE speed_up_kubelet: reset_feature_gates waits for a hot-reload
+# log event, and the kubelet needs to already be in a stable sync state for
+# that wait to complete within the timeout.
 reset_feature_gates
+
+# Speed up ConfigMap propagation for the duration of the test run.
+# This runs AFTER the initial reset so it doesn't race with post-restart
+# kubelet re-initialization.
+speed_up_kubelet
 
 # ── Test 1: Config Loading ───────────────────────────────────────────
 
 separator
 log "Test 1: Verify startup & config loading"
 
-CONFIG_LOGS=$(kubectl logs -n "${WEBHOOK_NS}" -l control-plane=controller-manager --tail=200 2>/dev/null || true)
+# Startup banners are logged once at pod start; use a large tail to ensure they're captured
+# even when the pod has been running for a while and has many subsequent log lines.
+CONFIG_LOGS=$(kubectl logs -n "${WEBHOOK_NS}" -l control-plane=controller-manager --tail=5000 2>/dev/null || true)
 
 if echo "${CONFIG_LOGS}" | grep -q "PLATFORM CONFIGURATION"; then
   pass "Test 1: Platform configuration banner found in logs"
@@ -208,9 +267,9 @@ fi
 # ── Test 2: Baseline — All Sidecars ─────────────────────────────────
 
 separator
-log "Test 2: Baseline — all sidecars injected (with SPIRE label)"
+log "Test 2: Baseline — all sidecars injected by default (no SPIRE label needed)"
 
-deploy t2-baseline 'kagenti.io/spire: "enabled"'
+deploy t2-baseline
 
 INIT=$(get_init_containers t2-baseline)
 CONT=$(get_containers t2-baseline)
@@ -240,9 +299,9 @@ reset_feature_gates
 # ── Test 4: Workload Label — Disable Spiffe-Helper ───────────────────
 
 separator
-log "Test 4: Workload label opt-out — disable spiffe-helper"
+log "Test 4: Workload label opt-out — disable spiffe-helper (kagenti.io/spiffe-helper-inject=false)"
 
-deploy t4-no-spiffe 'kagenti.io/spire: "enabled"' 'kagenti.io/spiffe-helper-inject: "false"'
+deploy t4-no-spiffe 'kagenti.io/spiffe-helper-inject: "false"'
 
 INIT=$(get_init_containers t4-no-spiffe)
 CONT=$(get_containers t4-no-spiffe)
@@ -252,52 +311,67 @@ assert_has     "Test 4" "${ENVOY}"       "${CONT}"
 assert_missing "Test 4" "${SPIFFE}"      "${CONT}"
 assert_has     "Test 4" "${CLIENT_REG}"  "${CONT}"
 
-# ── Test 5: Global Kill Switch ───────────────────────────────────────
+# ── Test 5: SPIRE Opt-Out Label ───────────────────────────────────────
 
 separator
-log "Test 5: Global kill switch OFF"
+log "Test 5: SPIRE opt-out label — kagenti.io/spire=disabled skips spiffe-helper"
+
+deploy t5-spire-optout 'kagenti.io/spire: "disabled"'
+
+INIT=$(get_init_containers t5-spire-optout)
+CONT=$(get_containers t5-spire-optout)
+
+assert_has     "Test 5" "${PROXY_INIT}"  "${INIT}"
+assert_has     "Test 5" "${ENVOY}"       "${CONT}"
+assert_missing "Test 5" "${SPIFFE}"      "${CONT}"
+assert_has     "Test 5" "${CLIENT_REG}"  "${CONT}"
+
+# ── Test 6: Global Kill Switch ───────────────────────────────────────
+
+separator
+log "Test 6: Global kill switch OFF"
 
 set_feature_gates false true true true
-deploy t5-global-off
+deploy t6-global-off
 
-INIT=$(get_init_containers t5-global-off)
-CONT=$(get_containers t5-global-off)
+INIT=$(get_init_containers t6-global-off)
+CONT=$(get_containers t6-global-off)
 
-assert_missing "Test 5" "${PROXY_INIT}"  "${INIT}"
-assert_missing "Test 5" "${ENVOY}"       "${CONT}"
-assert_missing "Test 5" "${SPIFFE}"      "${CONT}"
-assert_missing "Test 5" "${CLIENT_REG}"  "${CONT}"
+assert_missing "Test 6" "${PROXY_INIT}"  "${INIT}"
+assert_missing "Test 6" "${ENVOY}"       "${CONT}"
+assert_missing "Test 6" "${SPIFFE}"      "${CONT}"
+assert_missing "Test 6" "${CLIENT_REG}"  "${CONT}"
 
 reset_feature_gates
 
-# ── Test 6: Namespace Not Opted In ───────────────────────────────────
+# ── Test 7: Namespace Not Opted In ───────────────────────────────────
 
 separator
-log "Test 6: Namespace not opted in"
+log "Test 7: Namespace not opted in"
 
 NO_OPTIN_NS="test-precedence-no-optin"
 kubectl create namespace "${NO_OPTIN_NS}" --dry-run=client -o yaml 2>/dev/null | kubectl apply -f - >/dev/null 2>&1
 # Intentionally do NOT label with kagenti-enabled=true
 
 # Deploy directly (can't use deploy() since different namespace)
-kubectl delete deployment -n "${NO_OPTIN_NS}" t6-no-optin --ignore-not-found >/dev/null 2>&1
+kubectl delete deployment -n "${NO_OPTIN_NS}" t7-no-optin --ignore-not-found >/dev/null 2>&1
 sleep 2
 kubectl apply -n "${NO_OPTIN_NS}" -f - <<'EOF' >/dev/null
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: t6-no-optin
+  name: t7-no-optin
   labels:
     kagenti.io/type: agent
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: t6-no-optin
+      app: t7-no-optin
   template:
     metadata:
       labels:
-        app: t6-no-optin
+        app: t7-no-optin
         kagenti.io/type: agent
     spec:
       containers:
@@ -307,26 +381,26 @@ spec:
 EOF
 sleep "${WAIT_SECS}"
 
-T6_INIT=$(kubectl get pods -n "${NO_OPTIN_NS}" -l app=t6-no-optin -o jsonpath='{.items[0].spec.initContainers[*].name}' 2>/dev/null || true)
-T6_CONT=$(kubectl get pods -n "${NO_OPTIN_NS}" -l app=t6-no-optin -o jsonpath='{.items[0].spec.containers[*].name}' 2>/dev/null || true)
+T7_INIT=$(kubectl get pods -n "${NO_OPTIN_NS}" -l app=t7-no-optin -o jsonpath='{.items[0].spec.initContainers[*].name}' 2>/dev/null || true)
+T7_CONT=$(kubectl get pods -n "${NO_OPTIN_NS}" -l app=t7-no-optin -o jsonpath='{.items[0].spec.containers[*].name}' 2>/dev/null || true)
 
-assert_missing "Test 6" "${PROXY_INIT}"  "${T6_INIT}"
-assert_missing "Test 6" "${ENVOY}"       "${T6_CONT}"
-assert_missing "Test 6" "${SPIFFE}"      "${T6_CONT}"
-assert_missing "Test 6" "${CLIENT_REG}"  "${T6_CONT}"
+assert_missing "Test 7" "${PROXY_INIT}"  "${T7_INIT}"
+assert_missing "Test 7" "${ENVOY}"       "${T7_CONT}"
+assert_missing "Test 7" "${SPIFFE}"      "${T7_CONT}"
+assert_missing "Test 7" "${CLIENT_REG}"  "${T7_CONT}"
 
-# ── Test 7: Decision Logs ────────────────────────────────────────────
+# ── Test 8: Decision Logs ────────────────────────────────────────────
 
 separator
-log "Test 7: Check injection decision logs"
+log "Test 8: Check injection decision logs"
 
 DECISION_LOGS=$(kubectl logs -n "${WEBHOOK_NS}" -l control-plane=controller-manager --tail=200 2>/dev/null | grep "injection decision" || true)
 
 if [ -n "${DECISION_LOGS}" ]; then
   DECISION_COUNT=$(echo "${DECISION_LOGS}" | wc -l | tr -d ' ')
-  pass "Test 7: Found ${DECISION_COUNT} injection decision log entries"
+  pass "Test 8: Found ${DECISION_COUNT} injection decision log entries"
 else
-  fail "Test 7: No injection decision log entries found"
+  fail "Test 8: No injection decision log entries found"
 fi
 
 # ── Cleanup ──────────────────────────────────────────────────────────
@@ -337,10 +411,11 @@ log "Cleaning up..."
 for dep in "${DEPLOYMENTS[@]}"; do
   kubectl delete deployment -n "${NS}" "${dep}" --ignore-not-found >/dev/null 2>&1
 done
-kubectl delete deployment -n "${NO_OPTIN_NS}" t6-no-optin --ignore-not-found >/dev/null 2>&1
+kubectl delete deployment -n "${NO_OPTIN_NS}" t7-no-optin --ignore-not-found >/dev/null 2>&1
 kubectl delete namespace "${NO_OPTIN_NS}" --ignore-not-found >/dev/null 2>&1
 
 reset_feature_gates
+reset_kubelet
 
 # ── Report ───────────────────────────────────────────────────────────
 

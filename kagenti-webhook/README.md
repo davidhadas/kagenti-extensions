@@ -38,18 +38,21 @@ The webhook supports flexible injection control via a multi-layer precedence sys
 For the AuthBridge webhook, each sidecar (`envoy-proxy`, `spiffe-helper`, `client-registration`) is evaluated through this chain:
 
 ```text
-Global Feature Gate → Per-Sidecar Feature Gate → Namespace Label → Workload Label → Platform Defaults → Inject
+Global Feature Gate → Per-Sidecar Feature Gate → Namespace Label → Workload Label → TokenExchange CR → Platform Defaults → Inject
+                                                                                     (spiffe-helper only: SPIRE opt-out label)
 ```
 
 | Layer | Scope | How to configure | Effect |
 | --- | --- | --- | --- |
-| Global Feature Gate | Cluster-wide | `featureGates.globalEnabled` in Helm values | Kill switch — disables ALL sidecar injection |
-| Per-Sidecar Feature Gate | Cluster-wide, per sidecar | `featureGates.envoyProxy`, `.spiffeHelper`, `.clientRegistration` in Helm values | Disables a specific sidecar cluster-wide |
-| Namespace Label | Namespace | `kagenti-enabled: "true"` label on namespace | Opts a namespace into injection |
-| Workload Label | Per-workload, per sidecar | `kagenti.io/envoy-proxy-inject: "false"` (etc.) on pod template | Disables a specific sidecar for one workload |
-| Platform Defaults | Cluster-wide, per sidecar | `defaults.sidecars.<sidecar>.enabled` in Helm values | Lowest-priority default |
+| 1. Global Feature Gate | Cluster-wide | `featureGates.globalEnabled` in Helm values | Kill switch — disables ALL sidecar injection |
+| 2. Per-Sidecar Feature Gate | Cluster-wide, per sidecar | `featureGates.envoyProxy`, `.spiffeHelper`, `.clientRegistration` in Helm values | Disables a specific sidecar cluster-wide |
+| 3. Namespace Label | Namespace | `kagenti-enabled: "true"` label on namespace | Required — namespaces without this label receive no injection |
+| 4. Workload Label | Per-workload, per sidecar | `kagenti.io/envoy-proxy-inject: "false"` (etc.) on pod template | Disables a specific sidecar for one workload |
+| 5. TokenExchange CR | Per-workload | TokenExchange CR (stub — not yet implemented) | CR override takes precedence over platform defaults |
+| 6. Platform Defaults | Cluster-wide, per sidecar | `defaults.sidecars.<sidecar>.enabled` in Helm values | Lowest-priority default; all sidecars enabled by default |
+| 7. SPIRE opt-out *(spiffe-helper only)* | Per-workload | `kagenti.io/spire: "disabled"` on pod template | Blocks spiffe-helper injection for that workload |
 
-The `proxy-init` init container always follows the `envoy-proxy` decision (it is required for envoy to function).
+All sidecars are injected **by default** when the namespace has `kagenti-enabled=true`. The `proxy-init` init container always follows the `envoy-proxy` decision (it is required for envoy to function).
 
 ### Feature Gates
 
@@ -93,7 +96,7 @@ spec:
       labels:
         app: my-app
         kagenti.io/type: agent        # Required: Identifies workload type (agent or tool)
-        kagenti.io/spire: enabled     # Optional: Enable SPIFFE/SPIRE integration
+        # kagenti.io/spire: disabled  # Optional: Add this label to opt out of spiffe-helper injection
     spec:
       containers:
       - name: app
@@ -130,29 +133,29 @@ spec:
         image: my-app:latest
 ```
 
-### SPIRE Integration Control
+### SPIRE Integration Opt-Out
 
-The AuthBridge webhook supports optional SPIRE integration. Use the `kagenti.io/spire` label on pod templates:
+`spiffe-helper` is injected by default when all precedence layers pass. To opt a specific workload out of SPIRE integration, set `kagenti.io/spire: disabled` on the pod template:
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: my-app-with-spire
+  name: my-app-no-spire
   namespace: my-apps
 spec:
   template:
     metadata:
       labels:
         kagenti.io/type: agent
-        kagenti.io/spire: enabled  # Enables spiffe-helper and client-registration sidecars
+        kagenti.io/spire: disabled  # Opt this workload out of spiffe-helper injection
     spec:
       containers:
       - name: app
         image: my-app:latest
 ```
 
-Without the `kagenti.io/spire: enabled` label, the spiffe-helper container is not injected even if its precedence decision is "inject".
+Without this label (or with any value other than `disabled`), spiffe-helper is injected whenever the standard 6-layer precedence chain permits it.
 
 ### Platform Configuration
 

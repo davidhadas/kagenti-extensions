@@ -88,6 +88,11 @@ func (b *ContainerBuilder) BuildSpiffeHelperContainer() corev1.Container {
 				MountPath: "/shared",
 			},
 		},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsUser:    ptr.To(int64(ClientRegistrationUID)),
+			RunAsGroup:   ptr.To(int64(ClientRegistrationGID)),
+			RunAsNonRoot: ptr.To(true),
+		},
 	}
 }
 
