@@ -534,8 +534,8 @@ kubectl exec -it test-client -n team1 -- sh
 Inside the pod, get credentials and send a request:
 
 ```bash
-# Get a Keycloak admin token
-ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/master/protocol/openid-connect/token \
+# Get a Keycloak admin token from the kagenti realm
+ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token \
   -d "grant_type=password" \
   -d "client_id=admin-cli" \
   -d "username=admin" \
