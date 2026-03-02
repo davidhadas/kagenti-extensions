@@ -2,12 +2,6 @@
 
 A Kubernetes admission webhook that automatically injects sidecar containers to enable Keycloak client registration and optional SPIFFE/SPIRE token exchanges for secure service-to-service authentication within the Kagenti platform.
 
-## ⚠️ Deprecation Notice
-
-**The Agent CR and MCPServer CR webhooks are deprecated** and will be removed in a future release.
-
-**Please migrate to the AuthBridge webhook** which supports standard Kubernetes workloads (Deployments, StatefulSets, DaemonSets, Jobs, CronJobs). See the [Migration Guide](#migration-guide) below for details.
-
 ## Overview
 
 This webhook provides security by automatically injecting sidecar containers that handle identity and authentication. It supports both standard Kubernetes workloads (Deployments, StatefulSets, etc.) and custom resources.
@@ -27,23 +21,13 @@ The sidecar approach provides a consistent pattern for extending functionality w
 
 The webhook supports sidecar injection for:
 
-### AuthBridge Webhook (Recommended)
-
-The **AuthBridge webhook** is the primary, actively maintained webhook that supports standard Kubernetes workload resources:
+The **AuthBridge webhook** supports standard Kubernetes workload resources:
 
 - **Deployments** (apps/v1)
 - **StatefulSets** (apps/v1)
 - **DaemonSets** (apps/v1)
 - **Jobs** (batch/v1)
 - **CronJobs** (batch/v1)
-
-All workloads use the **common pod mutation code** for consistent behavior.
-
-### Legacy Webhooks (Deprecated)
-
-> **⚠️ DEPRECATION NOTICE**: The following webhooks are deprecated and will be removed in a future release. Please migrate to the AuthBridge webhook with standard Kubernetes workloads.
-
-1. **Agent** (group: `agent.kagenti.dev/v1alpha1`) - Kagenti agents from [kagenti-operator](https://github.com/kagenti/kagenti-operator) *(deprecated)*
 
 ## Injection Control
 
@@ -65,7 +49,6 @@ metadata:
 Now all Deployments, StatefulSets, Jobs, etc. created in the `my-apps` namespace automatically get sidecars:
 
 ```yaml
-# AuthBridge webhook - standard Kubernetes workloads (recommended)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -82,19 +65,6 @@ spec:
       containers:
       - name: app
         image: my-app:latest
----
-# Legacy webhooks (deprecated)
-apiVersion: agent.kagenti.dev/v1alpha1
-kind: Agent
-metadata:
-  name: my-agent
-  namespace: my-apps
-spec:
-  podTemplateSpec:
-    spec:
-      containers:
-      - name: agent
-        image: my-agent:latest
 ```
 
 ### Per-Workload Control
@@ -118,19 +88,6 @@ spec:
       containers:
       - name: app
         image: my-app:latest
-```
-
-**Legacy webhooks** use **CR annotations** for control:
-
-```yaml
-# DEPRECATED - Agent CR example
-apiVersion: agent.kagenti.dev/v1alpha1
-kind: Agent
-metadata:
-  name: no-injection-agent
-  namespace: my-apps
-  annotations:
-    kagenti.dev/inject: "false"  # Explicit opt-out via CR annotation
 ```
 
 ### SPIRE Integration Control
@@ -159,19 +116,10 @@ Without the `kagenti.io/spire: enabled` label, only the `proxy-init` and `envoy-
 
 ### Injection Priority
 
-**For AuthBridge webhook (pod labels):**
-
 1. **Required Type Label**: `kagenti.io/type: agent` or `kagenti.io/type: tool` - if this label is missing or has any other value, injection is skipped regardless of the other settings.
 2. **Pod Label (opt-out)**: `kagenti.io/inject: disabled` - Explicitly disables injection when it would otherwise be enabled (for example, by namespace configuration).
 3. **Pod Label (opt-in)**: `kagenti.io/inject: enabled` - Explicitly enables injection for this pod.
 4. **Namespace Label**: `kagenti-enabled: "true"` - Namespace-wide enable (applies when the pod does not explicitly opt in or out via `kagenti.io/inject`).
-5. **Namespace Annotation**: `kagenti.io/inject: "enabled"` - Namespace-wide enable (applies when the pod does not explicitly opt in or out via `kagenti.io/inject`).
-
-**For legacy webhooks (CR annotations):**
-1. **CR Annotation (opt-out)**: `kagenti.dev/inject: "false"` - Explicit disable
-2. **CR Annotation (opt-in)**: `kagenti.dev/inject: "true"` - Explicit enable
-3. **Namespace Label**: `kagenti-enabled: "true"` - Namespace-wide enable
-4. **Namespace Annotation**: `kagenti.dev/inject: "true"` - Namespace-wide enable
 
 ## Architecture
 
@@ -240,41 +188,6 @@ The AuthBridge webhook supports two modes of operation:
                         (via Envoy proxy)
 ```
 
-### Legacy Webhook Architecture
-
-The legacy Agent CR and MCPServer CR webhooks inject only SPIRE-based sidecars:
-
-```
-┌────────────────────────────────────────────────────────-─┐
-│              MCPServer/Agent Pod (DEPRECATED)            │
-│                                                          │
-│  ┌─────────────────┐  ┌──────────────────────────────┐   │
-│  │ spiffe-helper   │  │ kagenti-client-registration  │   │
-│  │                 │  │                              │   │
-│  │ 1. Connects to  │  │ 2. Waits for jwt_svid.token  │   │
-│  │    SPIRE agent  │──│    in /opt/                  │   │
-│  │ 2. Gets JWT-SVID│  │ 3. Registers with Keycloak   │   │
-│  │ 3. Writes to    │  │    using SPIFFE identity     │   │
-│  │    /opt/jwt_    │  │ 4. Runs continuously         │   │
-│  │    svid.token   │  │                              │   │
-│  └─────────────────┘  └──────────────────────────────┘   │
-│           │                        │                     │
-│  ┌────────▼────────────────────────▼───────────────────┐ │
-│  │        Shared Volume: svid-output (/opt)            │ │
-│  └─────────────────────────────────────────────────────┘ │
-│                                                          │
-│  ┌────────────────────────────────────┐                  │
-│  │    Your Application Container      │                  │
-│  │    (Agent or MCPServer CR)         │                  │
-│  │  (authenticated via Keycloak)      │                  │
-│  └────────────────────────────────────┘                  │
-└──────────────────────────────────────────────────-───────┘
-         │                           │
-         ▼                           ▼
-  SPIRE Agent Socket          Keycloak Server
-  (/run/spire/agent-sockets)  (OAuth2/OIDC)
-```
-
 For detailed architecture diagrams, see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Features
@@ -322,32 +235,14 @@ The AuthBridge webhook injects the following containers into Kubernetes workload
 - **Volumes**:
   - `/opt` - Reads SVID token from spiffe-helper
 
-#### Legacy Webhook Containers
-
-The legacy Agent CR and MCPServer CR webhooks inject only SPIRE-related sidecars:
-
-- **spiffe-helper** - Obtains JWT-SVIDs from SPIRE
-- **kagenti-client-registration** - Registers with Keycloak using SPIFFE identity
-
 ### Automatic Volume Configuration
 
-#### AuthBridge Webhook
-
-The AuthBridge webhook automatically adds these volumes:
+The webhook automatically adds these volumes:
 
 - **`spire-agent-socket`** - CSI volume (`csi.spiffe.io` driver) providing the SPIRE Workload API socket for SPIRE agent access (when SPIRE enabled)
 - **`spiffe-helper-config`** - ConfigMap containing SPIFFE helper configuration (when SPIRE enabled)
 - **`svid-output`** - EmptyDir for SVID token exchange between sidecars (when SPIRE enabled)
-- **`envoy-config`** - ConfigMap containing Envoy configuration injected by the AuthBridge webhook
-
-#### Legacy Webhooks
-
-The legacy webhooks automatically add these volumes:
-
-- **`shared-data`** - EmptyDir for inter-container communication
-- **`spire-agent-socket`** - HostPath to `/run/spire/agent-sockets` for SPIRE agent access
-- **`spiffe-helper-config`** - ConfigMap containing SPIFFE helper configuration
-- **`svid-output`** - EmptyDir for SVID token exchange between sidecars
+- **`envoy-config`** - ConfigMap containing Envoy configuration
 
 
 ## Getting Started
@@ -407,95 +302,26 @@ webhook:
 
 ## Development
 
-### Shared Pod-Mutator Architecture
+### Pod-Mutator Architecture
 
-All webhooks use a shared pod mutation engine to eliminate code duplication:
+The webhook uses a shared pod mutation engine:
 
 ```bash
 internal/webhook/
 ├── injector/                    # Shared mutation logic
-│   ├── pod_mutator.go          # Core mutation engine
-│   ├── namespace_checker.go    # Namespace inspection
+│   ├── pod_mutator.go          # Core mutation engine (InjectAuthBridge)
 │   ├── container_builder.go    # Build sidecars & init containers
 │   └── volume_builder.go       # Build volumes
 └── v1alpha1/
-    ├── authbridge_webhook.go   # AuthBridge webhook (recommended)
-    ├── mcpserver_webhook.go    # MCPServer webhook (deprecated)
-    └── agent_webhook.go         # Agent webhook (deprecated)
+    └── authbridge_webhook.go   # AuthBridge webhook handler
 ```
 
-All webhooks use the same `PodMutator` instance, ensuring:
-
-- Consistent behavior across resource types
-- Single source of truth for injection logic
-- Easy to add new resource types or features
-
-The AuthBridge webhook uses the `InjectAuthBridge()` method which supports:
+The `InjectAuthBridge()` method supports:
 
 - Init container injection (proxy-init)
 - Sidecar container injection (envoy-proxy, spiffe-helper, client-registration)
 - Optional SPIRE integration via pod labels
-- Support for standard Kubernetes workloads
-
-The legacy webhooks use the `MutatePodSpec()` method which only supports SPIRE-based sidecar injection.
-
-## Migration Guide
-
-### Migrating from Legacy Webhooks to AuthBridge
-
-If you're currently using the legacy Agent CR or MCPServer CR webhooks, you can migrate to the AuthBridge webhook by converting your custom resources to standard Kubernetes workloads:
-
-**Before (Agent CR - Deprecated):**
-
-```yaml
-apiVersion: agent.kagenti.dev/v1alpha1
-kind: Agent
-metadata:
-  name: my-agent
-  namespace: my-apps
-  annotations:
-    kagenti.dev/inject: "true"
-spec:
-  podTemplateSpec:
-    spec:
-      containers:
-      - name: agent
-        image: my-agent:latest
-```
-
-**After (Deployment with AuthBridge - Recommended):**
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: my-agent
-  namespace: my-apps
-spec:
-  selector:
-    matchLabels:
-      app: my-agent
-  template:
-    metadata:
-      labels:
-        app: my-agent
-        kagenti.io/type: agent       # Required: Identifies workload type (agent or tool)
-        kagenti.io/inject: enabled   # Enable injection via pod label
-        kagenti.io/spire: enabled    # Enable SPIRE integration
-    spec:
-      containers:
-      - name: agent
-        image: my-agent:latest
-```
-
-**Key differences:**
-
-- Use **pod labels** instead of CR annotations for injection control
-- Add `kagenti.io/type: agent` (or `tool`) label - required for injection to occur
-- Add `kagenti.io/spire: enabled` label to enable SPIRE integration (optional)
-- AuthBridge also injects `proxy-init` (init container) and `envoy-proxy` (sidecar) for traffic management
-- Standard Kubernetes resources benefit from better tooling and ecosystem support
-
+- Support for standard Kubernetes workloads (Deployments, StatefulSets, DaemonSets, Jobs, CronJobs)
 
 ## Uninstallation
 

@@ -8,7 +8,6 @@ godebug default=go1.23
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0
-	github.com/kagenti/operator v0.2.0-alpha.12
 	github.com/onsi/ginkgo/v2 v2.26.0
 	github.com/onsi/gomega v1.38.2
 	k8s.io/api v0.34.1
@@ -117,5 +116,3 @@ require (
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.0 // indirect
 )
-
-replace github.com/kagenti/operator => github.com/kagenti/kagenti-operator/kagenti-operator v0.0.0-20251024013620-c0a6504fbf39

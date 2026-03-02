@@ -7,15 +7,4 @@ layout:
 - go.kubebuilder.io/v4
 projectName: kagenti-webhook
 repo: github.com/kagenti/kagenti-extensions/kagenti-webhook
-resources:
-- domain: kagenti.dev
-  external: true
-  group: agent
-  kind: Agent
-  path: github.com/kagenti/operator/api/v1alpha1
-  version: v1alpha1
-  webhooks:
-    defaulting: true
-    validation: true
-    webhookVersion: v1
 version: "3"

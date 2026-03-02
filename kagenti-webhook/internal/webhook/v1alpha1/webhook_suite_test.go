@@ -31,7 +31,6 @@ import (
 
 	"github.com/kagenti/kagenti-extensions/kagenti-webhook/internal/webhook/config"
 	"github.com/kagenti/kagenti-extensions/kagenti-webhook/internal/webhook/injector"
-	agentsv1alpha1 "github.com/kagenti/operator/api/v1alpha1"
 	admissionv1 "k8s.io/api/admission/v1"
 	apimachineryruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
@@ -69,9 +68,6 @@ var _ = BeforeSuite(func() {
 
 	var err error
 	scheme := apimachineryruntime.NewScheme()
-
-	err = agentsv1alpha1.AddToScheme(scheme)
-	Expect(err).NotTo(HaveOccurred())
 
 	err = admissionv1.AddToScheme(scheme)
 	Expect(err).NotTo(HaveOccurred())
@@ -124,7 +120,7 @@ var _ = BeforeSuite(func() {
 		func() *config.FeatureGates { return config.DefaultFeatureGates() },
 	)
 
-	err = SetupAgentWebhookWithManager(mgr, podMutator)
+	err = SetupAuthBridgeWebhookWithManager(mgr, podMutator)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:webhook

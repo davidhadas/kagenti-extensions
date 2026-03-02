@@ -33,7 +33,7 @@ webhooks:
           - {{ include "kagenti-webhook.namespace" . }}
     matchLabels:
       # Only trigger webhook for namespaces that have opted-in
-      # This aligns with NeedsMutation() which requires kagenti-enabled: true
+      # This aligns with the precedence evaluator Layer 3 which requires kagenti-enabled: true
       kagenti-enabled: "true"
   rules:
   - operations:

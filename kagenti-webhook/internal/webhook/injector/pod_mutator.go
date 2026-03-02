@@ -35,9 +35,6 @@ const (
 	SpiffeHelperContainerName       = "spiffe-helper"
 	ClientRegistrationContainerName = "kagenti-client-registration"
 
-	// Default configuration (deprecated paths use these directly)
-	DefaultNamespaceAnnotation = "kagenti.dev/inject"
-	DefaultCRAnnotation        = "kagenti.dev/inject"
 	// Label selector for authbridge injection.
 	// Injection uses opt-in semantics: only AuthBridgeInjectValue triggers
 	// injection; any other value (including AuthBridgeDisabledValue, absent,
@@ -66,8 +63,6 @@ const (
 type PodMutator struct {
 	Client                   client.Client
 	EnableClientRegistration bool
-	NamespaceLabel           string
-	NamespaceAnnotation      string
 	Builder                  *ContainerBuilder
 	// Getter functions for hot-reloadable config (used by precedence evaluator)
 	GetPlatformConfig func() *config.PlatformConfig
@@ -84,46 +79,10 @@ func NewPodMutator(
 	return &PodMutator{
 		Client:                   client,
 		EnableClientRegistration: enableClientRegistration,
-		NamespaceLabel:           LabelNamespaceInject,
-		NamespaceAnnotation:      DefaultNamespaceAnnotation,
 		Builder:                  NewContainerBuilder(cfg),
 		GetPlatformConfig:        getPlatformConfig,
 		GetFeatureGates:          getFeatureGates,
 	}
-}
-
-// DEPRECATED, used by Agent CR. Remove ShouldMutate after Agent CR is deleted and use InjectAuthBridge instead.
-
-// main entry point for pod mutations
-// It checks if injection should occur and performs all necessary mutations
-func (m *PodMutator) MutatePodSpec(ctx context.Context, podSpec *corev1.PodSpec, namespace, crName string, crAnnotations map[string]string) error {
-	mutatorLog.Info("MutatePodSpec called", "namespace", namespace, "crName", crName, "annotations", crAnnotations)
-
-	shouldMutate, err := m.ShouldMutate(ctx, namespace, crAnnotations)
-	if err != nil {
-		mutatorLog.Error(err, "Failed to determine if mutation should occur", "namespace", namespace, "crName", crName)
-		return fmt.Errorf("failed to determine if mutation should occur: %w", err)
-	}
-
-	if !shouldMutate {
-		mutatorLog.Info("Skipping mutation (injection not enabled)", "namespace", namespace, "crName", crName)
-		return nil // Skip mutation
-	}
-
-	mutatorLog.Info("Mutation enabled - injecting sidecars and volumes", "namespace", namespace, "crName", crName)
-
-	if err := m.InjectSidecars(podSpec, namespace, crName); err != nil {
-		mutatorLog.Error(err, "Failed to inject sidecars", "namespace", namespace, "crName", crName)
-		return fmt.Errorf("failed to inject sidecars: %w", err)
-	}
-
-	if err := m.InjectVolumes(podSpec); err != nil {
-		mutatorLog.Error(err, "Failed to inject volumes", "namespace", namespace, "crName", crName)
-		return fmt.Errorf("failed to inject volumes: %w", err)
-	}
-
-	mutatorLog.Info("Successfully mutated pod spec", "namespace", namespace, "crName", crName, "containers", len(podSpec.Containers), "volumes", len(podSpec.Volumes))
-	return nil
 }
 
 // InjectAuthBridge evaluates the multi-layer precedence chain and conditionally injects sidecars.
@@ -255,167 +214,6 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		"volumes", len(podSpec.Volumes),
 		"spireEnabled", spireEnabled)
 	return true, nil
-}
-
-// DEPRECATED, used by Agent CR. Remove ShouldMutate after Agent CR is deleted and use NeedsMutation instead.
-
-// ShouldMutate determines if pod mutation should occur based on annotations and namespace labels
-// Priority order:
-// 1. CR annotation (opt-out): kagenti.dev/inject=false
-// 2. CR annotation (opt-in): kagenti.dev/inject=true
-// 3. Namespace label: kagenti-enabled=true
-// 4. Namespace annotation: kagenti.dev/inject=true
-
-func (m *PodMutator) ShouldMutate(ctx context.Context, namespace string, crAnnotations map[string]string) (bool, error) {
-	mutatorLog.Info("Checking if mutation should occur", "namespace", namespace, "crAnnotations", crAnnotations)
-
-	// Priority 1: CR-level opt-out (explicit disable)
-	if crAnnotations[DefaultCRAnnotation] == "false" {
-		mutatorLog.Info("CR annotation opt-out detected", "namespace", namespace, "annotation", DefaultCRAnnotation)
-		return false, nil
-	}
-
-	// Priority 2: CR-level opt-in (explicit enable)
-	if crAnnotations[DefaultCRAnnotation] == "true" {
-		mutatorLog.Info("CR annotation opt-in detected", "namespace", namespace, "annotation", DefaultCRAnnotation)
-		return true, nil
-	}
-
-	// Priority 3 & 4: Check namespace-level settings
-	mutatorLog.Info("Checking namespace-level injection settings", "namespace", namespace, "label", m.NamespaceLabel, "annotation", m.NamespaceAnnotation)
-	nsInjectionEnabled, err := CheckNamespaceInjectionEnabled(ctx, m.Client, namespace, m.NamespaceLabel, m.NamespaceAnnotation)
-	if err != nil {
-		mutatorLog.Error(err, "Failed to check namespace injection settings", "namespace", namespace)
-		return false, fmt.Errorf("failed to check namespace injection settings: %w", err)
-	}
-
-	if nsInjectionEnabled {
-		mutatorLog.Info("Namespace-level injection enabled", "namespace", namespace)
-		return true, nil
-	}
-	return false, nil
-}
-
-// NeedsMutation is DEPRECATED (used by Agent CR only).
-// It uses different opt-in semantics than InjectAuthBridge: when
-// kagenti.io/inject is absent it falls back to namespace-level settings.
-// InjectAuthBridge requires an explicit kagenti.io/inject=enabled label.
-// Do NOT align these — the behavioural difference is intentional.
-func (m *PodMutator) NeedsMutation(ctx context.Context, namespace string, labels map[string]string) (bool, error) {
-	mutatorLog.Info("Checking if mutation should occur", "namespace", namespace, "labels", labels)
-
-	// First, check if this is an agent workload (required for authbridge injection)
-	kagentiType, hasKagentiLabel := labels[KagentiTypeLabel]
-	if !hasKagentiLabel || (kagentiType != KagentiTypeAgent && kagentiType != KagentiTypeTool) {
-		mutatorLog.Info("Skipping mutation: workload is not an agent or a tool",
-			"hasLabel", hasKagentiLabel,
-			"labelValue", kagentiType)
-		return false, nil
-	}
-
-	value, exists := labels[AuthBridgeInjectLabel]
-
-	// If label exists, respect its value (opt-in or opt-out)
-	if exists {
-		if value == AuthBridgeInjectValue {
-			mutatorLog.Info("Workload label opt-in detected ")
-			return true, nil
-		}
-		// Any other value (including "disabled", "false", etc.) is opt-out
-		mutatorLog.Info("Workload label opt-out detected ")
-		return false, nil
-	}
-
-	// No label - fall back to namespace-level settings
-	mutatorLog.Info("Checking namespace-level injection settings", "namespace", namespace, "label", m.NamespaceLabel)
-	return IsNamespaceInjectionEnabled(ctx, m.Client, namespace, m.NamespaceLabel)
-}
-func (m *PodMutator) InjectSidecars(podSpec *corev1.PodSpec, namespace, crName string) error {
-	// Default to SPIRE enabled for backward compatibility
-	return m.InjectSidecarsWithSpireOption(podSpec, namespace, crName, true)
-}
-
-// InjectSidecarsWithSpireOption injects sidecars with optional SPIRE support
-func (m *PodMutator) InjectSidecarsWithSpireOption(podSpec *corev1.PodSpec, namespace, crName string, spireEnabled bool) error {
-	if podSpec.Containers == nil {
-		podSpec.Containers = []corev1.Container{}
-	}
-
-	// Only inject spiffe-helper if SPIRE is enabled
-	if spireEnabled {
-		if !containerExists(podSpec.Containers, SpiffeHelperContainerName) {
-			mutatorLog.Info("Injecting spiffe-helper (SPIRE enabled)")
-			podSpec.Containers = append(podSpec.Containers, m.Builder.BuildSpiffeHelperContainer())
-		}
-	} else {
-		mutatorLog.Info("Skipping spiffe-helper injection (SPIRE disabled)")
-	}
-
-	// Check and inject client-registration sidecar (with SPIRE option)
-	if m.EnableClientRegistration {
-		if !containerExists(podSpec.Containers, ClientRegistrationContainerName) {
-			podSpec.Containers = append(podSpec.Containers, m.Builder.BuildClientRegistrationContainerWithSpireOption(crName, namespace, spireEnabled))
-		}
-	} else {
-		mutatorLog.Info("Skipping client-registration injection (disabled via --enable-client-registration=false)")
-	}
-
-	// Check and inject envoy-proxy sidecar
-	if !containerExists(podSpec.Containers, EnvoyProxyContainerName) {
-		podSpec.Containers = append(podSpec.Containers, m.Builder.BuildEnvoyProxyContainerWithSpireOption(spireEnabled))
-	}
-
-	return nil
-}
-
-func (m *PodMutator) InjectInitContainers(podSpec *corev1.PodSpec) error {
-	mutatorLog.Info("Injecting init containers", "existingInitContainers", len(podSpec.InitContainers))
-
-	if podSpec.InitContainers == nil {
-		podSpec.InitContainers = []corev1.Container{}
-	}
-
-	// Check and inject proxy-init init container
-	if !containerExists(podSpec.InitContainers, ProxyInitContainerName) {
-		mutatorLog.Info("Injecting proxy-init init container")
-		podSpec.InitContainers = append(podSpec.InitContainers, m.Builder.BuildProxyInitContainer())
-	}
-
-	return nil
-}
-
-func (m *PodMutator) InjectVolumes(podSpec *corev1.PodSpec) error {
-	// Default to SPIRE enabled for backward compatibility
-	return m.InjectVolumesWithSpireOption(podSpec, true)
-}
-
-// InjectVolumesWithSpireOption injects volumes with optional SPIRE support
-func (m *PodMutator) InjectVolumesWithSpireOption(podSpec *corev1.PodSpec, spireEnabled bool) error {
-	mutatorLog.Info("Injecting volumes", "existingVolumes", len(podSpec.Volumes), "spireEnabled", spireEnabled)
-
-	if podSpec.Volumes == nil {
-		podSpec.Volumes = []corev1.Volume{}
-	}
-
-	// Add all required volumes if they don't exist
-	var requiredVolumes []corev1.Volume
-	if spireEnabled {
-		requiredVolumes = BuildRequiredVolumes()
-	} else {
-		requiredVolumes = BuildRequiredVolumesNoSpire()
-	}
-
-	injectedCount := 0
-	for _, vol := range requiredVolumes {
-		if !volumeExists(podSpec.Volumes, vol.Name) {
-			mutatorLog.Info("Injecting volume", "volumeName", vol.Name)
-			podSpec.Volumes = append(podSpec.Volumes, vol)
-			injectedCount++
-		}
-	}
-
-	mutatorLog.Info("Volume injection complete", "totalVolumes", len(podSpec.Volumes), "injected", injectedCount)
-	return nil
 }
 
 const managedByLabel = "kagenti.io/managed-by"

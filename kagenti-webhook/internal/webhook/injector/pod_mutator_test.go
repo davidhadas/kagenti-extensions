@@ -35,8 +35,6 @@ func newTestMutator(objs ...client.Object) *PodMutator {
 	return &PodMutator{
 		Client:                   fakeClient,
 		EnableClientRegistration: true,
-		NamespaceLabel:           LabelNamespaceInject,
-		NamespaceAnnotation:      DefaultNamespaceAnnotation,
 		Builder:                  NewContainerBuilder(config.CompiledDefaults()),
 		GetPlatformConfig:        config.CompiledDefaults,
 		GetFeatureGates:          config.DefaultFeatureGates,

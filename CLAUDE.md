@@ -43,12 +43,10 @@ A Kubernetes **mutating admission webhook** that intercepts workload creation (D
 **Detailed guide:** [`kagenti-webhook/CLAUDE.md`](kagenti-webhook/CLAUDE.md)
 
 **Key facts:**
-- Primary webhook: **AuthBridge** (recommended), with deprecated Agent webhook still present
-- AuthBridge webhook path: `/mutate-workloads-authbridge`
+- Webhook: **AuthBridge** at `/mutate-workloads-authbridge`
 - Injection controlled via pod labels (`kagenti.io/type`, `kagenti.io/inject`, `kagenti.io/spire`) and namespace labels (`kagenti-enabled: "true"`)
-- Shared `PodMutator` instance across all webhooks (in `internal/webhook/injector/`)
-- **AuthBridge path** injects: `proxy-init` (init), `envoy-proxy`, `spiffe-helper` (gated by `kagenti.io/spire` label), `kagenti-client-registration` (gated by `--enable-client-registration` flag)
-- **Legacy path** (deprecated Agent) injects: `spiffe-helper`, `kagenti-client-registration`, `envoy-proxy` (no `proxy-init` — legacy does not call `InjectInitContainers`)
+- Shared `PodMutator` instance (in `internal/webhook/injector/`)
+- Injects: `proxy-init` (init), `envoy-proxy`, `spiffe-helper` (gated by `kagenti.io/spire` label), `kagenti-client-registration` (gated by `--enable-client-registration` flag)
 - Build: `cd kagenti-webhook && make build` / `make test` / `make docker-build`
 - Local dev: `cd kagenti-webhook && make local-dev CLUSTER=<kind-cluster>`
 
@@ -277,8 +275,6 @@ AUTHBRIDGE_DEMO=true ./scripts/webhook-rollout.sh
 4. **Port Coordination:** Envoy listens on 15123 (outbound) and 15124 (inbound). The ext-proc listens on 9090. The `proxy-init` iptables rules redirect to these ports. The webhook's `container_builder.go` exposes these ports on the container spec.
 
 5. **Image References:** Default image tags are hardcoded in `kagenti-webhook/internal/webhook/injector/container_builder.go` and paralleled in `kagenti-webhook/internal/webhook/config/defaults.go`. The CI in `build.yaml` builds the images. All three must stay in sync.
-
-6. **Replace Directive:** `kagenti-webhook/go.mod` has a `replace` directive for `github.com/kagenti/operator`. Be careful when updating this dependency.
 
 ## Gotchas and Known Issues
 
