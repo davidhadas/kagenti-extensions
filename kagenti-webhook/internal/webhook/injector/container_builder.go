@@ -38,6 +38,12 @@ const (
 	// Keep in sync with AuthBridge/client-registration/Dockerfile
 	ClientRegistrationUID = 1000
 	ClientRegistrationGID = 1000
+
+	// FSGroup for shared volume access in SPIRE mode.
+	// Sets group ownership of emptyDir volumes (like svid-output) to enable
+	// multiple containers with different UIDs to read/write shared files.
+	// All sidecar containers get this as a supplemental group ID.
+	SharedVolumesFSGroup = 1000
 )
 
 // ContainerBuilder creates container specs from resolved config.

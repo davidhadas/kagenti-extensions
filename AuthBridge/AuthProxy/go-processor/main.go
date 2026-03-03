@@ -35,7 +35,7 @@ type Config struct {
 	TargetAudience string
 	TargetScopes   string
 	SpireEnabled   bool   // Whether to use SPIFFE federated auth
-	JWTSvid        string // JWT-SVID content (loaded at startup)
+	JWTSvidPath    string // Path to JWT-SVID file (reloaded on each token exchange)
 	mu             sync.RWMutex
 }
 
@@ -186,10 +186,10 @@ func loadConfig() {
 		log.Printf("[Config] Using CLIENT_SECRET from environment variable")
 	}
 
-	// Load JWT-SVID content (always attempt, regardless of SPIRE flag)
+	// Store JWT-SVID path (will be reloaded on each token exchange)
+	globalConfig.JWTSvidPath = jwtSvidPath
 	if jwtSvid, err := readFileContent(jwtSvidPath); err == nil && jwtSvid != "" {
-		globalConfig.JWTSvid = jwtSvid
-		log.Printf("[Config] Loaded JWT-SVID from file: %s (%d bytes)", jwtSvidPath, len(jwtSvid))
+		log.Printf("[Config] JWT-SVID available at: %s (%d bytes)", jwtSvidPath, len(jwtSvid))
 	} else if err != nil {
 		log.Printf("[Config] JWT-SVID not available at %s: %v", jwtSvidPath, err)
 	}
@@ -199,7 +199,7 @@ func loadConfig() {
 	log.Printf("[Config]   CLIENT_ID: %s", globalConfig.ClientID)
 	log.Printf("[Config]   CLIENT_SECRET: [REDACTED, length=%d]", len(globalConfig.ClientSecret))
 	log.Printf("[Config]   SPIRE_ENABLED: %v", globalConfig.SpireEnabled)
-	log.Printf("[Config]   JWT_SVID: [REDACTED, length=%d]", len(globalConfig.JWTSvid))
+	log.Printf("[Config]   JWT_SVID_PATH: %s", globalConfig.JWTSvidPath)
 	log.Printf("[Config]   TOKEN_URL: %s", globalConfig.TokenURL)
 	log.Printf("[Config]   TARGET_AUDIENCE: %s", globalConfig.TargetAudience)
 	log.Printf("[Config]   TARGET_SCOPES: %s", globalConfig.TargetScopes)
@@ -239,10 +239,10 @@ func waitForCredentials(maxWait time.Duration) bool {
 }
 
 // getConfig returns the current configuration
-func getConfig() (clientID, clientSecret, tokenURL, targetAudience, targetScopes string, spireEnabled bool, jwtSvid string) {
+func getConfig() (clientID, clientSecret, tokenURL, targetAudience, targetScopes string, spireEnabled bool, jwtSvidPath string) {
 	globalConfig.mu.RLock()
 	defer globalConfig.mu.RUnlock()
-	return globalConfig.ClientID, globalConfig.ClientSecret, globalConfig.TokenURL, globalConfig.TargetAudience, globalConfig.TargetScopes, globalConfig.SpireEnabled, globalConfig.JWTSvid
+	return globalConfig.ClientID, globalConfig.ClientSecret, globalConfig.TokenURL, globalConfig.TargetAudience, globalConfig.TargetScopes, globalConfig.SpireEnabled, globalConfig.JWTSvidPath
 }
 
 var (
@@ -359,10 +359,10 @@ func getHostFromHeaders(headers []*core.HeaderValue) string {
 //
 // Two authentication modes are supported:
 // 1. Traditional: Uses client_secret for client authentication
-// 2. SPIFFE Federated: Uses JWT-SVID (pre-loaded from globalConfig) as client_assertion
+// 2. SPIFFE Federated: Uses JWT-SVID (reloaded from file on each call) as client_assertion
 //
 // When spireEnabled=true:
-// - Uses JWT-SVID from the jwtSvid parameter (loaded at startup by loadConfig)
+// - Reloads JWT-SVID from the jwtSvidPath parameter on each token exchange
 // - Uses client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-spiffe"
 // - Uses client_assertion: <JWT-SVID> instead of client_secret
 // - Requires Keycloak with federated-jwt client authenticator and SPIFFE identity provider
@@ -374,7 +374,7 @@ func getHostFromHeaders(headers []*core.HeaderValue) string {
 // Optional actor token support (RFC 8693 Section 4.1):
 // - When actorToken is non-empty, includes actor_token in the exchange request
 // - Enables act claim chaining for multi-hop delegation scenarios
-func exchangeToken(clientID, clientSecret, tokenURL, subjectToken, audience, scopes string, spireEnabled bool, jwtSvid, actorToken string) (string, error) {
+func exchangeToken(clientID, clientSecret, tokenURL, subjectToken, audience, scopes string, spireEnabled bool, jwtSvidPath, actorToken string) (string, error) {
 	log.Printf("[Token Exchange] Starting token exchange")
 	log.Printf("[Token Exchange] Token URL: %s", tokenURL)
 	log.Printf("[Token Exchange] Client ID: %s", clientID)
@@ -405,12 +405,15 @@ func exchangeToken(clientID, clientSecret, tokenURL, subjectToken, audience, sco
 		// SPIFFE Federated Authentication
 		log.Printf("[Token Exchange] Using SPIFFE federated authentication")
 
-		if jwtSvid == "" {
-			log.Printf("[Token Exchange] JWT-SVID is empty")
-			return "", fmt.Errorf("JWT-SVID is empty (SPIRE enabled but no JWT-SVID loaded)")
+		// Reload JWT-SVID from file on each token exchange to ensure it's fresh
+		// spiffe-helper continuously updates this file (~every 2.5 minutes)
+		jwtSvid, err := readFileContent(jwtSvidPath)
+		if err != nil || jwtSvid == "" {
+			log.Printf("[Token Exchange] Failed to load JWT-SVID from %s: %v", jwtSvidPath, err)
+			return "", fmt.Errorf("JWT-SVID unavailable at %s (SPIRE enabled but file not readable)", jwtSvidPath)
 		}
 
-		log.Printf("[Token Exchange] Using JWT-SVID (%d bytes)", len(jwtSvid))
+		log.Printf("[Token Exchange] Loaded fresh JWT-SVID from %s (%d bytes)", jwtSvidPath, len(jwtSvid))
 
 		// Use jwt-spiffe assertion type (required by Keycloak's SPIFFE provider)
 		data.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-spiffe")
@@ -607,7 +610,7 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 	}
 
 	// Get global configuration (from files or env vars)
-	clientID, clientSecret, tokenURL, targetAudience, targetScopes, spireEnabled, jwtSvid := getConfig()
+	clientID, clientSecret, tokenURL, targetAudience, targetScopes, spireEnabled, jwtSvidPath := getConfig()
 
 	// Apply target-specific overrides if available
 	if targetConfig != nil {
@@ -627,7 +630,7 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 	}
 
 	// Check if we have required config (clientSecret not needed when SPIRE is enabled)
-	hasCredentials := (spireEnabled && jwtSvid != "") || clientSecret != ""
+	hasCredentials := (spireEnabled && jwtSvidPath != "") || clientSecret != ""
 	if clientID != "" && hasCredentials && tokenURL != "" && targetAudience != "" && targetScopes != "" {
 		log.Println("[Token Exchange] Configuration loaded, attempting token exchange")
 		log.Printf("[Token Exchange] Client ID: %s", clientID)
@@ -649,7 +652,7 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 			subjectToken = strings.TrimPrefix(subjectToken, "bearer ")
 
 			if subjectToken != authHeader {
-				newToken, err := exchangeToken(clientID, clientSecret, tokenURL, subjectToken, targetAudience, targetScopes, spireEnabled, jwtSvid, actorToken)
+				newToken, err := exchangeToken(clientID, clientSecret, tokenURL, subjectToken, targetAudience, targetScopes, spireEnabled, jwtSvidPath, actorToken)
 				if err == nil {
 					log.Printf("[Token Exchange] Successfully exchanged token, replacing Authorization header")
 					return &v3.ProcessingResponse{
