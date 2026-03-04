@@ -8,4 +8,4 @@ metadata:
     app.kubernetes.io/component: platform-defaults
 data:
   config.yaml: |
-    {{- .Values.defaults | toYaml | nindent 4 }}
+    {{- .Values.defaults | default dict | toYaml | nindent 4 }}

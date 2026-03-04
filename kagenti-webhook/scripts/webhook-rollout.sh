@@ -118,14 +118,14 @@ fi
 echo ""
 
 # Step 1: Build and load image
-echo "[1/6] Building Docker image..."
-docker build -f Dockerfile . --tag "${IMAGE_NAME}" --load
+echo "[1/6] Building image..."
+"${DETECTED}" build -f Dockerfile . --tag "${IMAGE_NAME}" --load
 
 echo ""
 echo "[2/6] Loading image into kind cluster..."
 if ! kind load docker-image --name "${CLUSTER}" "${IMAGE_NAME}" 2>/dev/null; then
-    echo "kind load failed, using docker save workaround..."
-    docker save "${IMAGE_NAME}" | docker exec -i "${CLUSTER}-control-plane" ctr --namespace k8s.io images import -
+    echo "kind load failed, using save workaround..."
+    "${DETECTED}" save "${IMAGE_NAME}" | "${DETECTED}" exec -i "${CLUSTER}-control-plane" ctr --namespace k8s.io images import -
 fi
 
 # Steps 3-5: Deploy ConfigMaps and update deployment
@@ -184,14 +184,10 @@ echo ""
 echo "Waiting for rollout to complete..."
 kubectl rollout status -n "${NAMESPACE}" deployment/kagenti-webhook-controller-manager --timeout=120s
 
-# Step 6: Deploy authbridge webhook if it doesn't exist
+# Step 6: Apply authbridge webhook configuration (always, so updates take effect)
 echo ""
-echo "[6/6] Ensuring authbridge webhook configuration exists..."
-if kubectl get mutatingwebhookconfigurations kagenti-webhook-authbridge-mutating-webhook-configuration &>/dev/null; then
-    echo "Authbridge webhook already exists, skipping..."
-else
-    echo "Creating authbridge webhook configuration..."
-    kubectl apply -f - <<EOF
+echo "[6/6] Applying authbridge webhook configuration..."
+kubectl apply -f - <<EOF
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
@@ -213,7 +209,7 @@ webhooks:
   sideEffects: None
   namespaceSelector:
     matchExpressions:
-      # Exclude kube-system and other critical namespaces
+      # Exclude kube-system and other critical namespaces.
       - key: kubernetes.io/metadata.name
         operator: NotIn
         values:
@@ -221,10 +217,16 @@ webhooks:
           - kube-public
           - kube-node-lease
           - ${NAMESPACE}
-    matchLabels:
-      # Only trigger webhook for namespaces that have opted-in
-      # This aligns with NeedsMutation() which requires kagenti-enabled: true
-      kagenti-enabled: "true"
+  # Only intercept workloads explicitly labelled as agent or tool.
+  # Per-sidecar eligibility is decided inside the handler via the two-stage
+  # precedence chain (feature gates + workload opt-out labels).
+  objectSelector:
+    matchExpressions:
+      - key: kagenti.io/type
+        operator: In
+        values:
+          - agent
+          - tool
   rules:
   - operations:
     - CREATE
@@ -248,9 +250,8 @@ webhooks:
     - jobs
     - cronjobs
 EOF
-    echo "Waiting for cert-manager to inject CA bundle..."
-    sleep 5
-fi
+echo "Waiting for cert-manager to inject CA bundle..."
+sleep 5
 
 echo ""
 echo "=========================================="
@@ -270,11 +271,10 @@ if [ "${AUTHBRIDGE_DEMO}" = "true" ]; then
     echo "Setting up AuthBridge Demo Prerequisites"
     echo "=========================================="
 
-    # Ensure namespace exists with required label
+    # Ensure namespace exists
     echo ""
     echo "[AuthBridge 1/2] Creating namespace ${AUTHBRIDGE_NAMESPACE}..."
     kubectl create namespace "${AUTHBRIDGE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
-    kubectl label namespace "${AUTHBRIDGE_NAMESPACE}" kagenti-enabled=true --overwrite
     kubectl label namespace "${AUTHBRIDGE_NAMESPACE}" istio.io/dataplane-mode=ambient --overwrite
 
     # Apply ConfigMaps (update namespace in-place)

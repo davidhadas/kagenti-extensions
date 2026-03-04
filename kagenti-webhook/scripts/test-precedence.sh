@@ -189,6 +189,45 @@ EOF
   sleep "${WAIT_SECS}"
 }
 
+# Deploy a tool workload (kagenti.io/type=tool). Extra args are additional label lines.
+deploy_tool() {
+  local name=$1; shift
+  local extra_labels=""
+  for lbl in "$@"; do
+    extra_labels="${extra_labels}
+        ${lbl}"
+  done
+
+  kubectl delete deployment -n "${NS}" "${name}" --ignore-not-found >/dev/null 2>&1
+  sleep 2
+
+  kubectl apply -n "${NS}" -f - <<EOF >/dev/null
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${name}
+  labels:
+    kagenti.io/type: tool
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${name}
+  template:
+    metadata:
+      labels:
+        app: ${name}
+        kagenti.io/type: tool${extra_labels}
+    spec:
+      containers:
+      - name: app
+        image: busybox
+        command: ["sleep", "3600"]
+EOF
+  DEPLOYMENTS+=("${name}")
+  sleep "${WAIT_SECS}"
+}
+
 # Return space-separated list of init container names for a pod.
 get_init_containers() {
   kubectl get pods -n "${NS}" -l "app=$1" -o jsonpath='{.items[0].spec.initContainers[*].name}' 2>/dev/null || true
@@ -224,8 +263,27 @@ assert_missing() {
 }
 
 # Set feature gates via ConfigMap patch, then wait for the webhook to confirm reload.
+# Args: global envoy spiffe clientreg [tools=false]
 set_feature_gates() {
-  local global=$1 envoy=$2 spiffe=$3 clientreg=$4
+  local global=$1 envoy=$2 spiffe=$3 clientreg=$4 tools=${5:-false}
+
+  # Build the exact content this patch would store.
+  local desired
+  desired=$(printf 'globalEnabled: %s\nenvoyProxy: %s\nspiffeHelper: %s\nclientRegistration: %s\ninjectTools: %s\n' \
+      "${global}" "${envoy}" "${spiffe}" "${clientreg}" "${tools}")
+
+  # If the CM already holds the desired values, kubectl patch is a Kubernetes
+  # no-op: the API server sees identical bytes, skips the etcd write, and
+  # resourceVersion is not bumped.  The kubelet therefore never re-writes the
+  # volume file, fsnotify never fires, and "Feature gates reloaded" is never
+  # logged.  Skip the wait — the webhook is already using the correct values.
+  local current
+  current=$(kubectl get configmap "${FG_CM}" -n "${WEBHOOK_NS}" \
+      -o go-template='{{index .data "feature-gates.yaml"}}' 2>/dev/null || true)
+  if [[ "${current}" == "${desired}" ]]; then
+    log "Feature gates already set: global=${global} envoy=${envoy} spiffe=${spiffe} clientreg=${clientreg} tools=${tools} (no change)"
+    return
+  fi
 
   # Record a timestamp BEFORE patching (RFC3339 UTC, required by kubectl --since-time).
   # This ensures we only match a "Feature gates reloaded" log entry that appeared
@@ -234,12 +292,11 @@ set_feature_gates() {
   before_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
   kubectl patch configmap "${FG_CM}" -n "${WEBHOOK_NS}" --type=merge \
-    -p "{\"data\":{\"feature-gates.yaml\":\"globalEnabled: ${global}\nenvoyProxy: ${envoy}\nspiffeHelper: ${spiffe}\nclientRegistration: ${clientreg}\n\"}}" >/dev/null
-  log "Feature gates set: global=${global} envoy=${envoy} spiffe=${spiffe} clientreg=${clientreg}"
+    -p "{\"data\":{\"feature-gates.yaml\":\"globalEnabled: ${global}\nenvoyProxy: ${envoy}\nspiffeHelper: ${spiffe}\nclientRegistration: ${clientreg}\ninjectTools: ${tools}\n\"}}" >/dev/null
+  log "Feature gates set: global=${global} envoy=${envoy} spiffe=${spiffe} clientreg=${clientreg} tools=${tools}"
 
   # Poll logs for "Feature gates reloaded successfully" (emitted by feature_gate_loader.go)
   # using --since-time to filter out reload messages from previous calls.
-  # Kubernetes ConfigMap volume propagation can take up to 1-2 minutes.
   log "Waiting for hot-reload (up to ${HOTRELOAD_MAX_WAIT}s)..."
   local waited=0
   while [ "${waited}" -lt "${HOTRELOAD_MAX_WAIT}" ]; do
@@ -258,9 +315,9 @@ set_feature_gates() {
   log "WARNING: Hot-reload not confirmed after ${HOTRELOAD_MAX_WAIT}s — proceeding anyway"
 }
 
-# Reset feature gates to all enabled.
+# Reset feature gates to defaults: all sidecars enabled, injectTools=false.
 reset_feature_gates() {
-  set_feature_gates true true true true
+  set_feature_gates true true true true false
 }
 
 # ── Preconditions ────────────────────────────────────────────────────
@@ -276,14 +333,12 @@ log "Webhook namespace: ${WEBHOOK_NS}"
 log "Kind cluster: ${CLUSTER}"
 echo ""
 
-# Ensure namespace is opted in
-kubectl label namespace "${NS}" kagenti-enabled=true --overwrite >/dev/null 2>&1
-log "Namespace ${NS} labelled kagenti-enabled=true"
-
 # Speed up ConfigMap propagation first so that all subsequent hot-reload
 # waits use the fast 10s kubelet sync (HOTRELOAD_MAX_WAIT=30s requires this).
 # A brief pause lets the kubelet finish reinitializing after its restart.
 speed_up_kubelet
+# Ensure kubelet is always restored, even if set -e triggers an early exit.
+trap reset_kubelet EXIT
 sleep 10
 log "Kubelet stabilized"
 
@@ -350,7 +405,7 @@ assert_has     "Test 2" "${CLIENT_REG}"  "${CONT}"
 separator
 log "Test 3: Per-sidecar feature gate — disable envoy-proxy"
 
-set_feature_gates true false true true
+set_feature_gates true false true true false
 deploy t3-no-envoy
 
 INIT=$(get_init_containers t3-no-envoy)
@@ -377,27 +432,27 @@ assert_has     "Test 4" "${ENVOY}"       "${CONT}"
 assert_missing "Test 4" "${SPIFFE}"      "${CONT}"
 assert_has     "Test 4" "${CLIENT_REG}"  "${CONT}"
 
-# ── Test 5: SPIRE Opt-Out Label ───────────────────────────────────────
+# ── Test 5: Whole-Workload Opt-Out ────────────────────────────────────
 
 separator
-log "Test 5: SPIRE opt-out label — kagenti.io/spire=disabled skips spiffe-helper"
+log "Test 5: Whole-workload opt-out — kagenti.io/inject=disabled skips all sidecars (Stage 1)"
 
-deploy t5-spire-optout 'kagenti.io/spire: "disabled"'
+deploy t5-inject-disable 'kagenti.io/inject: "disabled"'
 
-INIT=$(get_init_containers t5-spire-optout)
-CONT=$(get_containers t5-spire-optout)
+INIT=$(get_init_containers t5-inject-disable)
+CONT=$(get_containers t5-inject-disable)
 
-assert_has     "Test 5" "${PROXY_INIT}"  "${INIT}"
-assert_has     "Test 5" "${ENVOY}"       "${CONT}"
+assert_missing "Test 5" "${PROXY_INIT}"  "${INIT}"
+assert_missing "Test 5" "${ENVOY}"       "${CONT}"
 assert_missing "Test 5" "${SPIFFE}"      "${CONT}"
-assert_has     "Test 5" "${CLIENT_REG}"  "${CONT}"
+assert_missing "Test 5" "${CLIENT_REG}"  "${CONT}"
 
 # ── Test 6: Global Kill Switch ───────────────────────────────────────
 
 separator
 log "Test 6: Global kill switch OFF"
 
-set_feature_gates false true true true
+set_feature_gates false true true true false
 deploy t6-global-off
 
 INIT=$(get_init_containers t6-global-off)
@@ -410,63 +465,158 @@ assert_missing "Test 6" "${CLIENT_REG}"  "${CONT}"
 
 reset_feature_gates
 
-# ── Test 7: Namespace Not Opted In ───────────────────────────────────
+# ── Test 7: Missing Type Label ────────────────────────────────────────
 
 separator
-log "Test 7: Namespace not opted in"
+log "Test 7: Stage 1 pre-filter — no kagenti.io/type label skips all sidecars"
 
-NO_OPTIN_NS="test-precedence-no-optin"
-kubectl create namespace "${NO_OPTIN_NS}" --dry-run=client -o yaml 2>/dev/null | kubectl apply -f - >/dev/null 2>&1
-# Intentionally do NOT label with kagenti-enabled=true
-
-# Deploy directly (can't use deploy() since different namespace)
-kubectl delete deployment -n "${NO_OPTIN_NS}" t7-no-optin --ignore-not-found >/dev/null 2>&1
+# Deploy manually: deploy() always sets kagenti.io/type: agent, so we need a raw apply
+kubectl delete deployment -n "${NS}" t7-no-type --ignore-not-found >/dev/null 2>&1
 sleep 2
-kubectl apply -n "${NO_OPTIN_NS}" -f - <<'EOF' >/dev/null
+kubectl apply -n "${NS}" -f - <<'EOF' >/dev/null
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: t7-no-optin
-  labels:
-    kagenti.io/type: agent
+  name: t7-no-type
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: t7-no-optin
+      app: t7-no-type
   template:
     metadata:
       labels:
-        app: t7-no-optin
-        kagenti.io/type: agent
+        app: t7-no-type
     spec:
       containers:
       - name: app
         image: busybox
         command: ["sleep", "3600"]
 EOF
+DEPLOYMENTS+=("t7-no-type")
 sleep "${WAIT_SECS}"
 
-T7_INIT=$(kubectl get pods -n "${NO_OPTIN_NS}" -l app=t7-no-optin -o jsonpath='{.items[0].spec.initContainers[*].name}' 2>/dev/null || true)
-T7_CONT=$(kubectl get pods -n "${NO_OPTIN_NS}" -l app=t7-no-optin -o jsonpath='{.items[0].spec.containers[*].name}' 2>/dev/null || true)
+T7_INIT=$(get_init_containers t7-no-type)
+T7_CONT=$(get_containers t7-no-type)
 
 assert_missing "Test 7" "${PROXY_INIT}"  "${T7_INIT}"
 assert_missing "Test 7" "${ENVOY}"       "${T7_CONT}"
 assert_missing "Test 7" "${SPIFFE}"      "${T7_CONT}"
 assert_missing "Test 7" "${CLIENT_REG}"  "${T7_CONT}"
 
-# ── Test 8: Decision Logs ────────────────────────────────────────────
+# ── Test 8: Tool — injectTools=false (default, Stage 1 P3) ───────────
 
 separator
-log "Test 8: Check injection decision logs"
+log "Test 8: Stage 1 P3 — tool workload skipped when injectTools=false (default)"
+
+# injectTools=false is the default; reset_feature_gates ensures it is set.
+deploy_tool t8-tool-skip
+
+T8_INIT=$(get_init_containers t8-tool-skip)
+T8_CONT=$(get_containers t8-tool-skip)
+
+assert_missing "Test 8" "${PROXY_INIT}"  "${T8_INIT}"
+assert_missing "Test 8" "${ENVOY}"       "${T8_CONT}"
+assert_missing "Test 8" "${SPIFFE}"      "${T8_CONT}"
+assert_missing "Test 8" "${CLIENT_REG}"  "${T8_CONT}"
+
+# ── Test 9: Tool — injectTools=true (Stage 1 P3) ─────────────────────
+
+separator
+log "Test 9: Stage 1 P3 — tool workload injected when injectTools=true"
+
+set_feature_gates true true true true true
+deploy_tool t9-tool-inject
+
+T9_INIT=$(get_init_containers t9-tool-inject)
+T9_CONT=$(get_containers t9-tool-inject)
+
+assert_has     "Test 9" "${PROXY_INIT}"  "${T9_INIT}"
+assert_has     "Test 9" "${ENVOY}"       "${T9_CONT}"
+assert_has     "Test 9" "${SPIFFE}"      "${T9_CONT}"
+assert_has     "Test 9" "${CLIENT_REG}"  "${T9_CONT}"
+
+reset_feature_gates
+
+# ── Test 10: spiffeHelper feature gate off (Stage 2 L1) ──────────────
+
+separator
+log "Test 10: Stage 2 L1 — spiffeHelper feature gate off"
+
+set_feature_gates true true false true false
+deploy t10-no-spiffe-gate
+
+T10_INIT=$(get_init_containers t10-no-spiffe-gate)
+T10_CONT=$(get_containers t10-no-spiffe-gate)
+
+assert_has     "Test 10" "${PROXY_INIT}"  "${T10_INIT}"
+assert_has     "Test 10" "${ENVOY}"       "${T10_CONT}"
+assert_missing "Test 10" "${SPIFFE}"      "${T10_CONT}"
+assert_has     "Test 10" "${CLIENT_REG}"  "${T10_CONT}"
+
+reset_feature_gates
+
+# ── Test 11: clientRegistration feature gate off (Stage 2 L1) ────────
+
+separator
+log "Test 11: Stage 2 L1 — clientRegistration feature gate off"
+
+set_feature_gates true true true false false
+deploy t11-no-clientreg-gate
+
+T11_INIT=$(get_init_containers t11-no-clientreg-gate)
+T11_CONT=$(get_containers t11-no-clientreg-gate)
+
+assert_has     "Test 11" "${PROXY_INIT}"  "${T11_INIT}"
+assert_has     "Test 11" "${ENVOY}"       "${T11_CONT}"
+assert_has     "Test 11" "${SPIFFE}"      "${T11_CONT}"
+assert_missing "Test 11" "${CLIENT_REG}"  "${T11_CONT}"
+
+reset_feature_gates
+
+# ── Test 12: envoy-proxy workload label opt-out (Stage 2 L2) ─────────
+
+separator
+log "Test 12: Stage 2 L2 — workload label opt-out: kagenti.io/envoy-proxy-inject=false"
+
+deploy t12-no-envoy-label 'kagenti.io/envoy-proxy-inject: "false"'
+
+T12_INIT=$(get_init_containers t12-no-envoy-label)
+T12_CONT=$(get_containers t12-no-envoy-label)
+
+# proxy-init mirrors envoy-proxy; both must be absent.
+assert_missing "Test 12" "${PROXY_INIT}"  "${T12_INIT}"
+assert_missing "Test 12" "${ENVOY}"       "${T12_CONT}"
+assert_has     "Test 12" "${SPIFFE}"      "${T12_CONT}"
+assert_has     "Test 12" "${CLIENT_REG}"  "${T12_CONT}"
+
+# ── Test 13: client-registration workload label opt-out (Stage 2 L2) ─
+
+separator
+log "Test 13: Stage 2 L2 — workload label opt-out: kagenti.io/client-registration-inject=false"
+
+deploy t13-no-clientreg-label 'kagenti.io/client-registration-inject: "false"'
+
+T13_INIT=$(get_init_containers t13-no-clientreg-label)
+T13_CONT=$(get_containers t13-no-clientreg-label)
+
+assert_has     "Test 13" "${PROXY_INIT}"  "${T13_INIT}"
+assert_has     "Test 13" "${ENVOY}"       "${T13_CONT}"
+assert_has     "Test 13" "${SPIFFE}"      "${T13_CONT}"
+assert_missing "Test 13" "${CLIENT_REG}"  "${T13_CONT}"
+
+# ── Test 14: Decision Logs ────────────────────────────────────────────
+
+separator
+log "Test 14: Check injection decision logs"
 
 DECISION_LOGS=$(kubectl logs -n "${WEBHOOK_NS}" -l control-plane=controller-manager --tail=200 2>/dev/null | grep "injection decision" || true)
 
 if [ -n "${DECISION_LOGS}" ]; then
   DECISION_COUNT=$(echo "${DECISION_LOGS}" | wc -l | tr -d ' ')
-  pass "Test 8: Found ${DECISION_COUNT} injection decision log entries"
+  pass "Test 14: Found ${DECISION_COUNT} injection decision log entries"
 else
-  fail "Test 8: No injection decision log entries found"
+  fail "Test 14: No injection decision log entries found"
 fi
 
 # ── Cleanup ──────────────────────────────────────────────────────────
@@ -477,8 +627,6 @@ log "Cleaning up..."
 for dep in "${DEPLOYMENTS[@]}"; do
   kubectl delete deployment -n "${NS}" "${dep}" --ignore-not-found >/dev/null 2>&1
 done
-kubectl delete deployment -n "${NO_OPTIN_NS}" t7-no-optin --ignore-not-found >/dev/null 2>&1
-kubectl delete namespace "${NO_OPTIN_NS}" --ignore-not-found >/dev/null 2>&1
 
 reset_feature_gates
 reset_kubelet
