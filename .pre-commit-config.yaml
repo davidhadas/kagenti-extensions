@@ -21,6 +21,15 @@ repos:
       - id: helmlint
         files: ^charts/
 
+  # Rewrite AI Co-authored-by trailers to Assisted-By
+  - repo: local
+    hooks:
+      - id: ai-assisted-by-trailer
+        name: Replace Co-Authored-By with Assisted-By
+        entry: scripts/hooks/commit-msg
+        language: script
+        stages: [commit-msg]
+
   - repo: local
     hooks:
       - id: go-fmt

@@ -289,3 +289,19 @@ AUTHBRIDGE_DEMO=true ./scripts/webhook-rollout.sh
 5. **CI Go version alignment:** Ensure the Go version in `ci.yaml` matches the highest Go version required across all modules (currently Go 1.24, matching `kagenti-webhook/go.mod`).
 
 6. **Envoy config not embedded:** The envoy-proxy sidecar mounts `envoy-config` ConfigMap at `/etc/envoy`. This ConfigMap must exist in the target namespace before workloads are created.
+
+## Commit Attribution Policy
+
+When creating git commits, do NOT use `Co-Authored-By` trailers for AI attribution.
+Instead, use `Assisted-By` to acknowledge AI assistance without inflating contributor stats:
+
+    Assisted-By: Claude (Anthropic AI) <noreply@anthropic.com>
+
+Never add `Co-authored-by`, `Made-with`, or similar trailers that GitHub parses as co-authorship.
+
+A `commit-msg` hook in `scripts/hooks/commit-msg` enforces this automatically.
+Install it via pre-commit:
+
+```sh
+pre-commit install --hook-type pre-commit --hook-type commit-msg
+```
