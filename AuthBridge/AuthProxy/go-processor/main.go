@@ -269,6 +269,21 @@ func denyRequest(message string) *v3.ProcessingResponse {
 	}
 }
 
+// denyOutboundRequest returns a 503 Service Unavailable when outbound token
+// acquisition fails, preventing unauthenticated requests from reaching downstream.
+func denyOutboundRequest(message string) *v3.ProcessingResponse {
+	return &v3.ProcessingResponse{
+		Response: &v3.ProcessingResponse_ImmediateResponse{
+			ImmediateResponse: &v3.ImmediateResponse{
+				Status: &typev3.HttpStatus{
+					Code: typev3.StatusCode_ServiceUnavailable,
+				},
+				Body: []byte(fmt.Sprintf(`{"error":"token_acquisition_failed","message":"%s"}`, message)),
+			},
+		},
+	}
+}
+
 // getHostFromHeaders extracts host from :authority (HTTP/2) or Host header
 func getHostFromHeaders(headers []*core.HeaderValue) string {
 	if host := getHeaderValue(headers, ":authority"); host != "" {
@@ -537,8 +552,10 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 					}
 				}
 				log.Printf("[Token Exchange] Failed to exchange token: %v", err)
+				return denyOutboundRequest("token exchange failed")
 			} else {
 				log.Printf("[Token Exchange] Invalid Authorization header format")
+				return denyOutboundRequest("invalid Authorization header format")
 			}
 		} else {
 			// No Authorization header on outbound — fall back to client_credentials.
@@ -568,6 +585,7 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 				}
 			}
 			log.Printf("[Client Credentials] Failed to obtain token: %v", err)
+			return denyOutboundRequest("client credentials token acquisition failed")
 		}
 	} else {
 		log.Println("[Token Exchange] Missing configuration, skipping token exchange")
