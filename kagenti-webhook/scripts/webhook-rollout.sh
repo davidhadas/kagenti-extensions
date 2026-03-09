@@ -118,33 +118,94 @@ fi
 echo ""
 
 # Step 1: Build and load image
-echo "[1/6] Building image..."
+echo "[1/7] Building image..."
 "${DETECTED}" build -f Dockerfile . --tag "${IMAGE_NAME}" --load
 
 echo ""
-echo "[2/6] Loading image into kind cluster..."
+echo "[2/7] Loading image into kind cluster..."
 if ! kind load docker-image --name "${CLUSTER}" "${IMAGE_NAME}" 2>/dev/null; then
     echo "kind load failed, using save workaround..."
     "${DETECTED}" save "${IMAGE_NAME}" | "${DETECTED}" exec -i "${CLUSTER}-control-plane" ctr --namespace k8s.io images import -
 fi
 
-# Steps 3-5: Deploy ConfigMaps and update deployment
+# Steps 3-4: Deploy ConfigMaps
 CHART_DIR="${SCRIPT_DIR}/../../charts/kagenti-webhook"
 
 echo ""
-echo "[3/6] Deploying platform defaults ConfigMap..."
+echo "[3/7] Deploying platform defaults ConfigMap..."
 helm template kagenti-webhook "${CHART_DIR}" \
   --set namespaceOverride="${NAMESPACE}" \
   --show-only templates/configmap-platform-defaults.yaml | kubectl apply -f -
 
 echo ""
-echo "[4/6] Deploying feature gates ConfigMap..."
+echo "[4/7] Deploying feature gates ConfigMap..."
 helm template kagenti-webhook "${CHART_DIR}" \
   --set namespaceOverride="${NAMESPACE}" \
   --show-only templates/configmap-feature-gates.yaml | kubectl apply -f -
 
+# Step 5: Apply webhook configuration BEFORE image rollout to avoid a race
+# where the old config sends non-Pod resources to the new Pod-only handler.
 echo ""
-echo "[5/6] Updating deployment (image + config volumes)..."
+echo "[5/7] Applying authbridge webhook configuration..."
+kubectl apply -f - <<EOF
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: kagenti-webhook-authbridge-mutating-webhook-configuration
+  annotations:
+    cert-manager.io/inject-ca-from: ${NAMESPACE}/kagenti-webhook-serving-cert
+webhooks:
+- name: inject.kagenti.io
+  admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: kagenti-webhook-webhook-service
+      namespace: ${NAMESPACE}
+      path: /mutate-workloads-authbridge
+      port: 443
+  failurePolicy: Fail
+  reinvocationPolicy: IfNeeded
+  timeoutSeconds: 10
+  sideEffects: None
+  namespaceSelector:
+    matchExpressions:
+      # Exclude kube-system and other critical namespaces.
+      - key: kubernetes.io/metadata.name
+        operator: NotIn
+        values:
+          - kube-system
+          - kube-public
+          - kube-node-lease
+          - ${NAMESPACE}
+    matchLabels:
+      # Only trigger webhook for namespaces that have opted-in
+      kagenti-enabled: "true"
+  objectSelector:
+    matchExpressions:
+      - key: kagenti.io/type
+        operator: In
+        values:
+          - agent
+          - tool
+      - key: kagenti.io/inject
+        operator: NotIn
+        values:
+          - disabled
+  rules:
+  - operations:
+    - CREATE
+    apiGroups:
+    - ""
+    apiVersions:
+    - v1
+    resources:
+    - pods
+EOF
+
+# Step 6: Update deployment (image + config volumes)
+echo ""
+echo "[6/7] Updating deployment (image + config volumes)..."
 # Update the container image
 kubectl -n "${NAMESPACE}" set image deployment/kagenti-webhook-controller-manager "manager=${IMAGE_NAME}"
 
@@ -181,77 +242,8 @@ ensure_volume_and_mount "platform-config" "kagenti-webhook-defaults"       "/etc
 ensure_volume_and_mount "feature-gates"   "kagenti-webhook-feature-gates"  "/etc/kagenti/feature-gates"
 
 echo ""
-echo "Waiting for rollout to complete..."
+echo "[7/7] Waiting for rollout to complete..."
 kubectl rollout status -n "${NAMESPACE}" deployment/kagenti-webhook-controller-manager --timeout=120s
-
-# Step 6: Apply authbridge webhook configuration (always, so updates take effect)
-echo ""
-echo "[6/6] Applying authbridge webhook configuration..."
-kubectl apply -f - <<EOF
-apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingWebhookConfiguration
-metadata:
-  name: kagenti-webhook-authbridge-mutating-webhook-configuration
-  annotations:
-    cert-manager.io/inject-ca-from: ${NAMESPACE}/kagenti-webhook-serving-cert
-webhooks:
-- name: inject.kagenti.io
-  admissionReviewVersions:
-  - v1
-  clientConfig:
-    service:
-      name: kagenti-webhook-webhook-service
-      namespace: ${NAMESPACE}
-      path: /mutate-workloads-authbridge
-      port: 443
-  failurePolicy: Fail
-  timeoutSeconds: 10
-  sideEffects: None
-  namespaceSelector:
-    matchExpressions:
-      # Exclude kube-system and other critical namespaces.
-      - key: kubernetes.io/metadata.name
-        operator: NotIn
-        values:
-          - kube-system
-          - kube-public
-          - kube-node-lease
-          - ${NAMESPACE}
-  # Only intercept workloads explicitly labelled as agent or tool.
-  # Per-sidecar eligibility is decided inside the handler via the two-stage
-  # precedence chain (feature gates + workload opt-out labels).
-  objectSelector:
-    matchExpressions:
-      - key: kagenti.io/type
-        operator: In
-        values:
-          - agent
-          - tool
-  rules:
-  - operations:
-    - CREATE
-    - UPDATE
-    apiGroups:
-    - apps
-    apiVersions:
-    - v1
-    resources:
-    - deployments
-    - statefulsets
-    - daemonsets
-  - operations:
-    - CREATE
-    - UPDATE
-    apiGroups:
-    - batch
-    apiVersions:
-    - v1
-    resources:
-    - jobs
-    - cronjobs
-EOF
-echo "Waiting for cert-manager to inject CA bundle..."
-sleep 5
 
 echo ""
 echo "=========================================="

@@ -22,9 +22,6 @@ rules:
   resources: ["serviceaccounts"]
   verbs: ["get", "create", "update"]
 - apiGroups: ["apps"]
-  resources: ["deployments", "statefulsets", "daemonsets"]
-  verbs: ["get", "list", "watch"]
-- apiGroups: ["batch"]
-  resources: ["jobs", "cronjobs"]
+  resources: ["replicasets"]
   verbs: ["get", "list", "watch"]
 {{- end }}

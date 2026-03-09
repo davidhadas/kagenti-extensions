@@ -15,7 +15,7 @@ There is one registered webhook:
 
 | Webhook | Path | Handles |
 |---------|------|---------|
-| **AuthBridge** | `/mutate-workloads-authbridge` | Deployments, StatefulSets, DaemonSets, Jobs, CronJobs |
+| **AuthBridge** | `/mutate-workloads-authbridge` | Pods at CREATE time (works with any workload controller) |
 
 The `PodMutator` instance is created in `cmd/main.go` and passed to the webhook setup function.
 
@@ -68,7 +68,8 @@ kagenti-webhook/
 │   │   ├── container_builder.go             #   Build* functions for each injected container
 │   │   └── volume_builder.go                #   BuildRequiredVolumes / BuildRequiredVolumesNoSpire
 │   └── v1alpha1/                            # Webhook handlers
-│       ├── authbridge_webhook.go            #   AuthBridge: raw admission.Handler
+│       ├── authbridge_webhook.go            #   AuthBridge: raw admission.Handler (Pod-level)
+│       ├── authbridge_webhook_test.go       #   Webhook handler tests (Ginkgo)
 │       └── webhook_suite_test.go            #   ENVTEST-based test setup (Ginkgo)
 ├── config/                                  # Kustomize manifests (CRDs, RBAC, webhook configs, etc.)
 ├── test/
@@ -199,20 +200,16 @@ Secrets:
 5. Update `isAlreadyInjected()` in `authbridge_webhook.go` to check for the new container name.
 6. Update `internal/webhook/config/types.go` and `defaults.go` with image/resource defaults.
 
-### Adding a New Supported Workload Type
-1. Add a new `case` in `AuthBridgeWebhook.Handle()` in `authbridge_webhook.go`.
-2. Update the kubebuilder webhook marker to include the new resource in the `resources` list.
-3. Run `make manifests` to regenerate webhook configuration YAML.
-4. Update `scripts/webhook-rollout.sh` to include the new resource in the webhook rules.
-5. Update the Helm chart template `charts/kagenti-webhook/templates/authbridge-mutatingwebhook.yaml`.
+### Webhook Targeting Model
+The webhook targets **Pods at CREATE time** (not Deployments/StatefulSets/etc.). This follows the same pattern used by Istio, Linkerd, and Vault Agent Injector. The handler decodes `corev1.Pod` directly — no switch on workload Kind. The `deriveWorkloadName()` helper extracts the workload name from `GenerateName` (trims trailing `-`). The `reinvocationPolicy` is set to `IfNeeded` so our webhook re-runs if other webhooks modify the Pod after our first pass.
 
 ### Modifying Injection Logic
 - Injection decision logic lives in `pod_mutator.go` in `InjectAuthBridge()`.
 - Changes to label/annotation keys require updating the constants at the top of `pod_mutator.go`.
 
 ### Updating Container Images
-- Default images are defined as constants in `injector/container_builder.go` (`DefaultEnvoyImage`, `DefaultProxyInitImage`) and inline in `BuildSpiffeHelperContainer()` and `BuildClientRegistrationContainerWithSpireOption()`.
-- The `internal/webhook/config/defaults.go` file has a parallel set of defaults in `CompiledDefaults()` -- keep them in sync (or wire the config system into the injector, which is a TODO).
+- Default images are defined in `internal/webhook/config/defaults.go` via `CompiledDefaults()`. The `ContainerBuilder` reads from `*config.PlatformConfig` at build time — never hardcode images/ports/resources in the builder.
+- The config system is fully wired in: `PodMutator` uses getter functions `func() *config.PlatformConfig` and creates a new `ContainerBuilder` per request with the current config snapshot, enabling hot-reload.
 - The GitHub Actions CI builds images defined in `../.github/workflows/build.yaml`.
 
 ### Helm Chart
@@ -226,7 +223,7 @@ Secrets:
 
 2. **Kubebuilder markers**: The `+kubebuilder:webhook` comments generate webhook manifests. If you change the path, resources, or groups, you must run `make manifests` to regenerate.
 
-3. **AuthBridge uses raw admission.Handler**: Unlike webhooks that use `CustomDefaulter`/`CustomValidator`, the AuthBridge webhook registers directly via `mgr.GetWebhookServer().Register()`. This is because it handles multiple resource types in a single handler.
+3. **AuthBridge uses raw admission.Handler**: Unlike webhooks that use `CustomDefaulter`/`CustomValidator`, the AuthBridge webhook registers directly via `mgr.GetWebhookServer().Register()`. It decodes `corev1.Pod` directly and includes a Kind guard for defense-in-depth against stale webhook configs.
 
 4. **Idempotency check**: `isAlreadyInjected()` checks for all four injected components (`envoy-proxy`, `spiffe-helper`, `kagenti-client-registration` in sidecar containers, `proxy-init` in init containers). If any one is found, re-admission is short-circuited.
 
