@@ -182,7 +182,7 @@ spec:
     spec:
       containers:
       - name: app
-        image: busybox
+        image: busybox:1.36
         command: ["sleep", "3600"]
 EOF
   DEPLOYMENTS+=("${name}")
@@ -221,7 +221,7 @@ spec:
     spec:
       containers:
       - name: app
-        image: busybox
+        image: busybox:1.36
         command: ["sleep", "3600"]
 EOF
   DEPLOYMENTS+=("${name}")
@@ -490,7 +490,7 @@ spec:
     spec:
       containers:
       - name: app
-        image: busybox
+        image: busybox:1.36
         command: ["sleep", "3600"]
 EOF
 DEPLOYMENTS+=("t7-no-type")

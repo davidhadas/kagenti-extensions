@@ -100,7 +100,7 @@ data:
     svid_key_file_name = "/opt/svid_key.pem"
     svid_bundle_file_name = "/opt/svid_bundle.pem"
     jwt_svids = [{jwt_audience="kagenti", jwt_svid_file_name="/opt/jwt_svid.token"}]
-    jwt_svid_file_mode = 0644
+    jwt_svid_file_mode = 0600
     include_federated_domains = true
 
 ---
@@ -388,7 +388,7 @@ spec:
               echo "============================================"
               echo "Agent registered with Keycloak!"
               echo "Client ID (Agent's SPIFFE ID): $CLIENT_ID"
-              echo "Client Secret: $CLIENT_SECRET"
+              echo "Client Secret: [redacted — see /shared/client-secret.txt]"
               echo "============================================"
               echo ""
               echo "=== AuthBridge Flow ==="
@@ -420,11 +420,18 @@ spec:
               mountPath: /shared
         # SPIFFE Helper - provides SPIFFE credentials (SVID)
         - name: spiffe-helper
-          image: ghcr.io/spiffe/spiffe-helper:nightly
+          image: ghcr.io/spiffe/spiffe-helper:0.11.0
           command:
             - /spiffe-helper
             - -config=/etc/spiffe-helper/helper.conf
             - run
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
           volumeMounts:
             - name: spiffe-helper-config
               mountPath: /etc/spiffe-helper

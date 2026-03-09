@@ -57,6 +57,14 @@ func (l *FeatureGateLoader) Load() error {
 		return fmt.Errorf("parsing feature gates file %s: %w", l.configPath, err)
 	}
 
+	// Guard against an empty or all-zero feature gates file (e.g. `featureGates`
+	// key removed from values.yaml renders `{}` which unmarshals to all booleans
+	// false). Fall back to compiled defaults so injection is not silently disabled.
+	if *gates == (FeatureGates{}) {
+		log.Info("Feature gates file is empty or all-zero, using compiled defaults to avoid silently disabling injection")
+		gates = DefaultFeatureGates()
+	}
+
 	l.mu.Lock()
 	l.current = gates
 	l.mu.Unlock()

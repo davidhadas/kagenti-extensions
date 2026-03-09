@@ -19,6 +19,12 @@ All four sidecars are injected by default for eligible agent workloads. Each can
 
 The sidecar approach provides a consistent pattern for extending functionality without modifying application code or upstream components.
 
+### Upgrading from the opt-in model
+
+Previous versions required `kagenti.io/inject: enabled` to trigger sidecar injection. This version uses an **opt-out** model: any workload with `kagenti.io/type: agent` is injected by default.
+
+**Impact on upgrade:** Existing agent workloads that relied on the *absence* of `kagenti.io/inject: enabled` to avoid injection will now receive sidecars. To preserve the previous behavior, add `kagenti.io/inject: disabled` to those workloads before upgrading.
+
 ## Supported Resources
 
 The webhook supports sidecar injection for:

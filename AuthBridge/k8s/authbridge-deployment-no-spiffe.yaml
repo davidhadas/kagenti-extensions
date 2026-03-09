@@ -344,7 +344,7 @@ spec:
               echo "============================================"
               echo "Client registered with Keycloak!"
               echo "Client ID: $CLIENT_ID"
-              echo "Client Secret: $CLIENT_SECRET"
+              echo "Client Secret: [redacted — see /shared/client-secret.txt]"
               echo "============================================"
               echo ""
               echo "To test, exec into this container and run:"
