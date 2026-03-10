@@ -17,9 +17,9 @@ webhooks:
       namespace: {{ include "kagenti-webhook.namespace" . }}
       path: /mutate-workloads-authbridge
   failurePolicy: Fail
+  reinvocationPolicy: IfNeeded
   timeoutSeconds: 10
   sideEffects: None
-  # Exclude system namespaces and the webhook's own namespace from mutation.
   namespaceSelector:
     matchExpressions:
       - key: kubernetes.io/metadata.name
@@ -29,9 +29,10 @@ webhooks:
           - kube-public
           - kube-node-lease
           - {{ include "kagenti-webhook.namespace" . }}
-  # Only intercept workloads explicitly labelled as agent or tool.
-  # Per-sidecar eligibility is then decided inside the handler via the
-  # two-stage precedence chain (feature gates + workload opt-out labels).
+    matchLabels:
+      # Only trigger webhook for namespaces that have opted-in
+      # This aligns with the precedence evaluator Layer 3 which requires kagenti-enabled: true
+      kagenti-enabled: "true"
   objectSelector:
     matchExpressions:
       - key: kagenti.io/type
@@ -39,26 +40,17 @@ webhooks:
         values:
           - agent
           - tool
+      - key: kagenti.io/inject
+        operator: NotIn
+        values:
+          - disabled
   rules:
   - operations:
     - CREATE
-    - UPDATE
     apiGroups:
-    - apps
+    - ""
     apiVersions:
     - v1
     resources:
-    - deployments
-    - statefulsets
-    - daemonsets
-  - operations:
-    - CREATE
-    - UPDATE
-    apiGroups:
-    - batch
-    apiVersions:
-    - v1
-    resources:
-    - jobs
-    - cronjobs
+    - pods
 {{- end }}

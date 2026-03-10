@@ -13,39 +13,14 @@ webhooks:
       path: /mutate-workloads-authbridge
   failurePolicy: Fail
   name: inject.kagenti.io
-  namespaceSelector:
-    matchExpressions:
-    # Exclude system namespaces.
-    - key: kubernetes.io/metadata.name
-      operator: NotIn
-      values:
-      - kube-system
-      - kube-public
-      - kube-node-lease
-  # Only intercept workloads explicitly labelled as agent or tool.
-  # Per-sidecar eligibility is decided inside the handler via the two-stage
-  # precedence chain (feature gates + workload opt-out labels).
-  objectSelector:
-    matchExpressions:
-    - key: kagenti.io/type
-      operator: In
-      values:
-      - agent
-      - tool
-  timeoutSeconds: 10
+  reinvocationPolicy: IfNeeded
   rules:
   - apiGroups:
-    - apps
-    - batch
+    - ""
     apiVersions:
     - v1
     operations:
     - CREATE
-    - UPDATE
     resources:
-    - deployments
-    - statefulsets
-    - daemonsets
-    - jobs
-    - cronjobs
+    - pods
   sideEffects: None

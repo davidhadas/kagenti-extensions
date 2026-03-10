@@ -32,6 +32,7 @@ import (
 	"github.com/kagenti/kagenti-extensions/kagenti-webhook/internal/webhook/config"
 	"github.com/kagenti/kagenti-extensions/kagenti-webhook/internal/webhook/injector"
 	admissionv1 "k8s.io/api/admission/v1"
+	corev1 "k8s.io/api/core/v1"
 	apimachineryruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -70,6 +71,9 @@ var _ = BeforeSuite(func() {
 	scheme := apimachineryruntime.NewScheme()
 
 	err = admissionv1.AddToScheme(scheme)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = corev1.AddToScheme(scheme)
 	Expect(err).NotTo(HaveOccurred())
 
 	// +kubebuilder:scaffold:scheme

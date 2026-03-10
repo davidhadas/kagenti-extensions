@@ -25,15 +25,10 @@ graph TB
     end
 
     subgraph "Kubernetes Resources"
-        subgraph "Standard Workloads"
-            DEPLOY[Deployments]
-            STS[StatefulSets]
-            DS[DaemonSets]
-            JOB[Jobs/CronJobs]
-        end
+        POD[Pods at CREATE]
     end
 
-    API -->|mutate workloads| AUTH
+    API -->|mutate pods| AUTH
 
     MAIN -->|creates & shares| MUTATOR
     MAIN -->|registers| AUTH
@@ -43,19 +38,13 @@ graph TB
     MUTATOR -->|builds containers| CONT
     MUTATOR -->|builds volumes| VOL
 
-    AUTH -.->|modifies| DEPLOY
-    AUTH -.->|modifies| STS
-    AUTH -.->|modifies| DS
-    AUTH -.->|modifies| JOB
+    AUTH -.->|modifies| POD
 
     style MUTATOR fill:#90EE90
     style AUTH fill:#32CD32,stroke:#006400,stroke-width:3px
     style CONT fill:#FFB6C1
     style VOL fill:#FFB6C1
-    style DEPLOY fill:#87CEEB
-    style STS fill:#87CEEB
-    style DS fill:#87CEEB
-    style JOB fill:#87CEEB
+    style POD fill:#87CEEB
 ```
 
 ## Container Injection Flow

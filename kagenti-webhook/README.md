@@ -4,7 +4,7 @@ A Kubernetes admission webhook that automatically injects sidecar containers to 
 
 ## Overview
 
-This webhook provides security by automatically injecting sidecar containers that handle identity and authentication. It supports both standard Kubernetes workloads (Deployments, StatefulSets, etc.) and custom resources.
+This webhook provides security by automatically injecting sidecar containers that handle identity and authentication. It intercepts **Pod CREATE** requests (not Deployments or other workload objects), which eliminates GitOps drift — the workload object in etcd remains exactly as the developer defined it, and sidecars are only visible at the Pod level.
 
 The webhook injects:
 
@@ -25,17 +25,23 @@ Previous versions required `kagenti.io/inject: enabled` to trigger sidecar injec
 
 **Impact on upgrade:** Existing agent workloads that relied on the *absence* of `kagenti.io/inject: enabled` to avoid injection will now receive sidecars. To preserve the previous behavior, add `kagenti.io/inject: disabled` to those workloads before upgrading.
 
+### BREAKING CHANGE: Namespace opt-in required
+
+The webhook now requires namespaces to have the `kagenti-enabled: "true"` label to receive sidecar injection. Existing namespaces that previously received injection will **silently stop** unless labeled.
+
+**Migration step:** Label each namespace where agent workloads run:
+
+```bash
+kubectl label ns <namespace> kagenti-enabled=true
+```
+
+The `webhook-rollout.sh` script automatically labels the AuthBridge demo namespace when `AUTHBRIDGE_DEMO=true` is set.
+
 ## Supported Resources
 
-The webhook supports sidecar injection for:
+The **AuthBridge webhook** intercepts **Pod CREATE** requests in the core API group (`v1`). It injects sidecars into Pods created by any workload controller — Deployments, StatefulSets, DaemonSets, Jobs, and CronJobs all produce Pods that the webhook can mutate.
 
-The **AuthBridge webhook** supports standard Kubernetes workload resources:
-
-- **Deployments** (apps/v1)
-- **StatefulSets** (apps/v1)
-- **DaemonSets** (apps/v1)
-- **Jobs** (batch/v1)
-- **CronJobs** (batch/v1)
+This Pod-level targeting follows the same pattern used by Istio, Linkerd, and Vault Agent Injector. Because the webhook mutates Pods (not the parent Deployment), GitOps tools like Argo CD and Flux see no drift on the workload object stored in etcd.
 
 ## Injection Control
 
@@ -206,7 +212,6 @@ The AuthBridge webhook supports two modes of operation:
 │                                                                │
 │  ┌──────────────────────────────────────────────────────────┐ │
 │  │              Your Application Container                   │ │
-│  │          (Deployment/StatefulSet/Job/etc.)               │ │
 │  └──────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────┘
          │                    │                    │
@@ -232,7 +237,6 @@ The AuthBridge webhook supports two modes of operation:
 │                                                                │
 │  ┌──────────────────────────────────────────────────────────┐ │
 │  │              Your Application Container                   │ │
-│  │          (Deployment/StatefulSet/Job/etc.)               │ │
 │  └──────────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────────────┘
                                │
@@ -347,8 +351,9 @@ The script handles the full build-and-deploy cycle:
 2. Loads the image into the Kind cluster
 3. Deploys the platform defaults ConfigMap (`kagenti-webhook-defaults`)
 4. Deploys the feature gates ConfigMap (`kagenti-webhook-feature-gates`)
-5. Updates the deployment image and patches in config volume mounts
-6. Applies the AuthBridge `MutatingWebhookConfiguration` (always, so updates take effect on re-runs)
+5. Applies the AuthBridge `MutatingWebhookConfiguration` (before image rollout to avoid race conditions)
+6. Updates the deployment image and patches in config volume mounts
+7. Waits for rollout to complete
 
 ```bash
 cd kagenti-webhook
@@ -435,8 +440,8 @@ The `InjectAuthBridge()` method supports:
 
 - Init container injection (proxy-init)
 - Sidecar container injection (envoy-proxy, spiffe-helper, client-registration)
-- Optional SPIRE integration via pod labels
-- Support for standard Kubernetes workloads (Deployments, StatefulSets, DaemonSets, Jobs, CronJobs)
+- Optional SPIRE integration via pod labels and feature gates
+- Pod-level mutation at CREATE time (works with any workload controller)
 
 ## Uninstallation
 
