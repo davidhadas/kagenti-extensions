@@ -58,6 +58,6 @@ metadata:
   namespace: team1
 data:
   routes.yaml: |
-    - host: "**.github-issue-tool**.svc.cluster.local"
+    - host: "github-tool-mcp"
       target_audience: "github-tool"
       token_scopes: "openid github-tool-aud github-full-access"
