@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	core "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	v3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -148,6 +150,119 @@ func TestMatchBypassPath(t *testing.T) {
 					tt.requestPath, got, tt.expectBypass, tt.patterns)
 			}
 		})
+	}
+}
+
+func TestActorTokenCache(t *testing.T) {
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		resp := tokenExchangeResponse{
+			AccessToken: "actor-token-v1",
+			ExpiresIn:   300,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cache := &actorTokenCache{}
+
+	// First call should hit the server
+	token, err := cache.getActorToken("client-id", "client-secret", server.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "actor-token-v1" {
+		t.Errorf("expected actor-token-v1, got %s", token)
+	}
+	if callCount != 1 {
+		t.Errorf("expected 1 server call, got %d", callCount)
+	}
+
+	// Second call should return cached value
+	token, err = cache.getActorToken("client-id", "client-secret", server.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "actor-token-v1" {
+		t.Errorf("expected cached actor-token-v1, got %s", token)
+	}
+	if callCount != 1 {
+		t.Errorf("expected still 1 server call (cached), got %d", callCount)
+	}
+
+	// Expire the cache and verify refresh
+	cache.mu.Lock()
+	cache.expiresAt = time.Now().Add(-1 * time.Second)
+	cache.mu.Unlock()
+
+	token, err = cache.getActorToken("client-id", "client-secret", server.URL)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if callCount != 2 {
+		t.Errorf("expected 2 server calls after expiry, got %d", callCount)
+	}
+}
+
+func TestExchangeTokenWithActorToken(t *testing.T) {
+	var receivedParams url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		receivedParams = r.Form
+		resp := tokenExchangeResponse{
+			AccessToken: "exchanged-token",
+			ExpiresIn:   300,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	// Test with actor token present
+	token, err := exchangeToken("cid", "csecret", server.URL, "subject-tok", "aud", "openid", "actor-tok")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "exchanged-token" {
+		t.Errorf("expected exchanged-token, got %s", token)
+	}
+	if receivedParams.Get("actor_token") != "actor-tok" {
+		t.Errorf("expected actor_token=actor-tok, got %s", receivedParams.Get("actor_token"))
+	}
+	if receivedParams.Get("actor_token_type") != "urn:ietf:params:oauth:token-type:access_token" {
+		t.Errorf("expected actor_token_type, got %s", receivedParams.Get("actor_token_type"))
+	}
+}
+
+func TestExchangeTokenWithoutActorToken(t *testing.T) {
+	var receivedParams url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.ParseForm()
+		receivedParams = r.Form
+		resp := tokenExchangeResponse{
+			AccessToken: "exchanged-token",
+			ExpiresIn:   300,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	// Test with empty actor token
+	token, err := exchangeToken("cid", "csecret", server.URL, "subject-tok", "aud", "openid", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if token != "exchanged-token" {
+		t.Errorf("expected exchanged-token, got %s", token)
+	}
+	if receivedParams.Get("actor_token") != "" {
+		t.Errorf("expected no actor_token param, got %s", receivedParams.Get("actor_token"))
+	}
+	if receivedParams.Get("actor_token_type") != "" {
+		t.Errorf("expected no actor_token_type param, got %s", receivedParams.Get("actor_token_type"))
 	}
 }
 
