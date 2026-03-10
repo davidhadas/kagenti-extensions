@@ -24,6 +24,8 @@ import (
 	. "github.com/onsi/gomega"    //nolint:revive // dot import is standard Gomega usage
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var testNsCounter int
@@ -76,6 +78,10 @@ var _ = Describe("AuthBridge Pod Webhook", func() {
 			err := k8sClient.Create(ctx, pod)
 			Expect(err).NotTo(HaveOccurred())
 
+			// Re-fetch from the API server to get server-side mutations
+			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), pod)
+			Expect(err).NotTo(HaveOccurred())
+
 			// Verify sidecars were injected
 			Expect(containerNames(pod.Spec.Containers)).To(ContainElement(injector.EnvoyProxyContainerName))
 			Expect(initContainerNames(pod.Spec.InitContainers)).To(ContainElement(injector.ProxyInitContainerName))
@@ -92,6 +98,9 @@ var _ = Describe("AuthBridge Pod Webhook", func() {
 			err := k8sClient.Create(ctx, pod)
 			Expect(err).NotTo(HaveOccurred())
 
+			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), pod)
+			Expect(err).NotTo(HaveOccurred())
+
 			Expect(containerNames(pod.Spec.Containers)).NotTo(ContainElement(injector.EnvoyProxyContainerName))
 			Expect(initContainerNames(pod.Spec.InitContainers)).NotTo(ContainElement(injector.ProxyInitContainerName))
 		})
@@ -104,6 +113,9 @@ var _ = Describe("AuthBridge Pod Webhook", func() {
 			})
 
 			err := k8sClient.Create(ctx, pod)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), pod)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(containerNames(pod.Spec.Containers)).NotTo(ContainElement(injector.EnvoyProxyContainerName))
@@ -119,6 +131,9 @@ var _ = Describe("AuthBridge Pod Webhook", func() {
 			})
 
 			err := k8sClient.Create(ctx, pod)
+			Expect(err).NotTo(HaveOccurred())
+
+			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), pod)
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(containerNames(pod.Spec.Containers)).NotTo(ContainElement(injector.EnvoyProxyContainerName))
@@ -141,6 +156,9 @@ var _ = Describe("AuthBridge Pod Webhook", func() {
 			err := k8sClient.Create(ctx, pod)
 			Expect(err).NotTo(HaveOccurred())
 
+			err = k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), pod)
+			Expect(err).NotTo(HaveOccurred())
+
 			// Count envoy-proxy containers — should be exactly 1 (the pre-existing one)
 			count := 0
 			for _, c := range pod.Spec.Containers {
@@ -155,25 +173,28 @@ var _ = Describe("AuthBridge Pod Webhook", func() {
 
 var _ = Describe("deriveWorkloadName", func() {
 	DescribeTable("should extract the correct workload name",
-		func(generateName, name, expected string) {
+		func(generateName, name, uid, expected string) {
 			pod := &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
 					GenerateName: generateName,
 					Name:         name,
+					UID:          types.UID(uid),
 				},
 			}
 			Expect(deriveWorkloadName(pod)).To(Equal(expected))
 		},
 		Entry("Deployment Pod (GenerateName with ReplicaSet hash)",
-			"myapp-7d4f8b9c5-", "", "myapp-7d4f8b9c5"),
+			"myapp-7d4f8b9c5-", "", "", "myapp-7d4f8b9c5"),
 		Entry("StatefulSet Pod (GenerateName without hash)",
-			"myapp-", "", "myapp"),
+			"myapp-", "", "", "myapp"),
 		Entry("Bare Pod with Name only",
-			"", "my-bare-pod", "my-bare-pod"),
+			"", "my-bare-pod", "", "my-bare-pod"),
 		Entry("Pod with both GenerateName and Name (GenerateName wins)",
-			"myapp-abc12-", "myapp-abc12-xyz", "myapp-abc12"),
+			"myapp-abc12-", "myapp-abc12-xyz", "", "myapp-abc12"),
 		Entry("GenerateName with no trailing hyphen",
-			"myapp", "", "myapp"),
+			"myapp", "", "", "myapp"),
+		Entry("Both empty — falls back to UID",
+			"", "", "abc-123-uid", "abc-123-uid"),
 	)
 })
 

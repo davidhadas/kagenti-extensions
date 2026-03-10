@@ -133,7 +133,7 @@ func deriveWorkloadName(pod *corev1.Pod) string {
 	}
 	// Both GenerateName and Name empty — should not happen for valid
 	// admission requests, but fall back to UID to avoid empty names.
-	authbridgelog.Info("Warning: Pod has neither Name nor GenerateName, falling back to UID",
+	authbridgelog.V(0).Info("Pod has neither Name nor GenerateName, falling back to UID",
 		"uid", pod.UID)
 	return string(pod.UID)
 }

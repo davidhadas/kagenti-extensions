@@ -268,6 +268,7 @@ if [ "${AUTHBRIDGE_DEMO}" = "true" ]; then
     echo "[AuthBridge 1/2] Creating namespace ${AUTHBRIDGE_NAMESPACE}..."
     kubectl create namespace "${AUTHBRIDGE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
     kubectl label namespace "${AUTHBRIDGE_NAMESPACE}" istio.io/dataplane-mode=ambient --overwrite
+    kubectl label namespace "${AUTHBRIDGE_NAMESPACE}" kagenti-enabled=true --overwrite
 
     # Apply ConfigMaps (update namespace in-place)
     # Note: AUTHBRIDGE_NAMESPACE is validated above to be a safe DNS-1123 label,

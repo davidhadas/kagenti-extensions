@@ -25,6 +25,18 @@ Previous versions required `kagenti.io/inject: enabled` to trigger sidecar injec
 
 **Impact on upgrade:** Existing agent workloads that relied on the *absence* of `kagenti.io/inject: enabled` to avoid injection will now receive sidecars. To preserve the previous behavior, add `kagenti.io/inject: disabled` to those workloads before upgrading.
 
+### BREAKING CHANGE: Namespace opt-in required
+
+The webhook now requires namespaces to have the `kagenti-enabled: "true"` label to receive sidecar injection. Existing namespaces that previously received injection will **silently stop** unless labeled.
+
+**Migration step:** Label each namespace where agent workloads run:
+
+```bash
+kubectl label ns <namespace> kagenti-enabled=true
+```
+
+The `webhook-rollout.sh` script automatically labels the AuthBridge demo namespace when `AUTHBRIDGE_DEMO=true` is set.
+
 ## Supported Resources
 
 The **AuthBridge webhook** intercepts **Pod CREATE** requests in the core API group (`v1`). It injects sidecars into Pods created by any workload controller — Deployments, StatefulSets, DaemonSets, Jobs, and CronJobs all produce Pods that the webhook can mutate.
