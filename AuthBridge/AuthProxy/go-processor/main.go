@@ -53,6 +53,11 @@ const defaultRoutesConfigPath = "/etc/authproxy/routes.yaml"
 
 var globalResolver resolver.TargetResolver
 
+// defaultOutboundPolicy controls behavior for outbound requests that don't match
+// any route in routes.yaml. "passthrough" (default) skips token exchange;
+// "exchange" attempts exchange using global config (legacy behavior).
+var defaultOutboundPolicy = "passthrough"
+
 // defaultBypassInboundPaths are paths that skip inbound JWT validation by default.
 // These cover common public endpoints: Agent Card discovery, health/readiness probes.
 var defaultBypassInboundPaths = []string{"/.well-known/*", "/healthz", "/readyz", "/livez"}
@@ -265,6 +270,16 @@ func denyRequest(message string) *v3.ProcessingResponse {
 				Body:    []byte(fmt.Sprintf(`{"error":"unauthorized","message":"%s"}`, message)),
 				Details: "jwt_validation_failed",
 			},
+		},
+	}
+}
+
+// passthroughResponse returns an empty headers response that forwards the
+// request unchanged. Used when token exchange is not needed or not configured.
+func passthroughResponse() *v3.ProcessingResponse {
+	return &v3.ProcessingResponse{
+		Response: &v3.ProcessingResponse_RequestHeaders{
+			RequestHeaders: &v3.HeadersResponse{},
 		},
 	}
 }
@@ -490,11 +505,15 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 	// Handle passthrough routes - skip token exchange
 	if targetConfig != nil && targetConfig.Passthrough {
 		log.Printf("[Resolver] Passthrough enabled for host %q, skipping token exchange", requestHost)
-		return &v3.ProcessingResponse{
-			Response: &v3.ProcessingResponse_RequestHeaders{
-				RequestHeaders: &v3.HeadersResponse{},
-			},
-		}
+		return passthroughResponse()
+	}
+
+	// When no route matches and policy is "passthrough", skip token exchange.
+	// This prevents unintended exchange for LLM APIs, telemetry, and other
+	// services that don't use Keycloak tokens.
+	if targetConfig == nil && defaultOutboundPolicy == "passthrough" {
+		log.Printf("[Outbound] No route for host %q, default policy is passthrough — skipping token exchange", requestHost)
+		return passthroughResponse()
 	}
 
 	// Get global configuration (from files or env vars)
@@ -595,11 +614,7 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 			targetAudience != "", targetScopes != "")
 	}
 
-	return &v3.ProcessingResponse{
-		Response: &v3.ProcessingResponse_RequestHeaders{
-			RequestHeaders: &v3.HeadersResponse{},
-		},
-	}
+	return passthroughResponse()
 }
 
 func (p *processor) Process(stream v3.ExternalProcessor_ProcessServer) error {
@@ -701,6 +716,17 @@ func main() {
 		}
 	}
 	log.Printf("[Inbound] Bypass paths: %v", bypassInboundPaths)
+
+	// Initialize outbound policy (default: passthrough)
+	if policy, ok := os.LookupEnv("DEFAULT_OUTBOUND_POLICY"); ok {
+		policy = strings.TrimSpace(strings.ToLower(policy))
+		if policy == "exchange" || policy == "passthrough" {
+			defaultOutboundPolicy = policy
+		} else {
+			log.Printf("[Outbound] Unknown DEFAULT_OUTBOUND_POLICY %q, using default %q", policy, defaultOutboundPolicy)
+		}
+	}
+	log.Printf("[Outbound] Default outbound policy: %s", defaultOutboundPolicy)
 
 	// Initialize the target resolver
 	configPath := os.Getenv("ROUTES_CONFIG_PATH")

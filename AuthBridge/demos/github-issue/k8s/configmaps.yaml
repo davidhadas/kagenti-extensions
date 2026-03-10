@@ -2,10 +2,13 @@
 #
 # The Kagenti installer already creates correct defaults for environments,
 # spiffe-helper-config, envoy-config, and authbridge-config (with the kagenti
-# realm). This file only overrides authbridge-config with demo-specific values:
-# - TARGET_AUDIENCE: github-tool (the MCP GitHub tool)
-# - TARGET_SCOPES: scopes for token exchange to the tool
-# - EXPECTED_AUDIENCE: the agent's SPIFFE ID for inbound validation
+# realm). This file overrides:
+# - authbridge-config: inbound validation and outbound exchange settings
+# - authproxy-routes: per-target token exchange routes
+#
+# The go-processor defaults to "passthrough" for outbound traffic, meaning
+# requests to unknown hosts (LLM APIs, telemetry, etc.) pass through without
+# token exchange. Only hosts listed in authproxy-routes get token exchange.
 #
 # Usage:
 #   kubectl apply -f configmaps.yaml
@@ -34,9 +37,27 @@ data:
   # Format: spiffe://localtest.me/ns/<namespace>/sa/<service-account>
   # Update if deploying to a different namespace or using a different service account.
   EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/team1/sa/git-issue-agent"
-  # TARGET_AUDIENCE: The GitHub tool's Keycloak client ID.
-  # AuthBridge exchanges tokens for this audience when the agent calls the tool.
+  # TARGET_AUDIENCE and TARGET_SCOPES are used as fallback values when a route
+  # in authproxy-routes matches but doesn't specify its own audience/scopes.
   TARGET_AUDIENCE: "github-tool"
-  # TARGET_SCOPES: Scopes to request in the exchanged token.
-  # github-tool-aud adds "github-tool" to the token's audience claim.
   TARGET_SCOPES: "openid github-tool-aud github-full-access"
+
+---
+# authproxy-routes ConfigMap - Per-target token exchange routes
+#
+# Defines which outbound hosts should get token exchange. All other hosts
+# pass through unchanged (the default outbound policy is "passthrough").
+# This allows the agent to call LLM APIs, telemetry endpoints, and other
+# services without interference from the token exchange proxy.
+#
+# Update the host pattern if the github-tool service name or namespace changes.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authproxy-routes
+  namespace: team1
+data:
+  routes.yaml: |
+    - host: "**.github-issue-tool**.svc.cluster.local"
+      target_audience: "github-tool"
+      token_scopes: "openid github-tool-aud github-full-access"

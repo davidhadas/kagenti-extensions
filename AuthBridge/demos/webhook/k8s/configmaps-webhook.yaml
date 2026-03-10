@@ -54,8 +54,38 @@ data:
   # Update this value if deploying to a different namespace or using a different service account.
   # If not set, audience validation is skipped (issuer and signature validation still occur).
   EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/team1/sa/agent"
+  # TARGET_AUDIENCE and TARGET_SCOPES: Fallback values for token exchange when a
+  # route in authproxy-routes matches but doesn't specify its own audience/scopes.
   TARGET_AUDIENCE: "auth-target"
   TARGET_SCOPES: "openid auth-target-aud"
+  # DEFAULT_OUTBOUND_POLICY: Controls behavior for outbound requests that don't
+  # match any route in authproxy-routes. Default is "passthrough" (skip exchange).
+  # Set to "exchange" to restore legacy behavior (exchange all outbound traffic).
+  # DEFAULT_OUTBOUND_POLICY: "passthrough"
+
+---
+# authproxy-routes ConfigMap (optional) - Per-target token exchange routes
+#
+# Defines which outbound hosts should get token exchange. All other hosts pass
+# through unchanged when DEFAULT_OUTBOUND_POLICY is "passthrough" (the default).
+#
+# If this ConfigMap does not exist, no outbound token exchange occurs (all
+# traffic passes through). Create it only when your agents need to authenticate
+# to specific services via Keycloak token exchange.
+#
+# Example:
+#   apiVersion: v1
+#   kind: ConfigMap
+#   metadata:
+#     name: authproxy-routes
+#     namespace: team1
+#   data:
+#     routes.yaml: |
+#       - host: "auth-target.team1.svc.cluster.local"
+#         target_audience: "auth-target"
+#         token_scopes: "openid auth-target-aud"
+#       - host: "otel-collector.*.svc.cluster.local"
+#         passthrough: true
 
 ---
 # spiffe-helper-config ConfigMap - Used by spiffe-helper container (SPIRE mode only)

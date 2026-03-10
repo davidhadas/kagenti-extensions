@@ -278,7 +278,7 @@ This creates:
 | **Scope** | `github-tool-aud` | Realm OPTIONAL — for exchanged tokens targeting the tool |
 | **Scope** | `github-full-access` | Realm OPTIONAL — for privileged GitHub API access |
 | **User** | `alice` (password: `alice123`) | Regular user — public access |
-| **User** | `bob` (password: `bob123`) | Privileged user — full access |
+| **User** | `bob` (password: `bob123`) | Demo user — request with `scope=github-full-access` for privileged access |
 
 ---
 
@@ -793,6 +793,206 @@ Expected:
 ```
 
 ### Clean Up Test Client
+
+```bash
+kubectl delete pod test-client -n team1 --ignore-not-found
+```
+
+---
+
+## Step 10: Access Control — Alice vs Bob
+
+<!-- WORKAROUND: Remove this note once kagenti-extensions#139 is implemented.
+     The full scope-forwarding feature in go-processor is required for this step to work
+     end-to-end. Until that lands, the exchanged token always includes github-full-access
+     (from the static TARGET_SCOPES in authbridge-config).
+     Track: https://github.com/kagenti/kagenti-extensions/issues/139 -->
+
+> **Known limitation:** This step requires the go-processor scope forwarding feature
+> ([kagenti-extensions#139](https://github.com/kagenti/kagenti-extensions/issues/139)).
+> Currently, `TARGET_SCOPES` in `authbridge-config` is static, so all exchanged tokens
+> include `github-full-access` regardless of the original user's scopes. Once scope
+> forwarding is implemented, Alice's exchanged token will omit `github-full-access`
+> while Bob's will include it.
+
+This step demonstrates **scope-based access control**: two users with different
+privilege levels get different GitHub API access through the same agent.
+
+| User | Token Scope | Tool PAT Used | Public Repos | Private Repos |
+|------|-------------|---------------|:------------:|:-------------:|
+| **Alice** | `openid` (no `github-full-access`) | `PUBLIC_ACCESS_PAT` | Yes | No |
+| **Bob** | `openid github-full-access` | `PRIVILEGED_ACCESS_PAT` | Yes | Yes |
+
+The flow:
+1. User authenticates with Keycloak using `password` grant
+2. Alice requests a token **without** `github-full-access`; Bob explicitly requests **with** it
+   (`github-full-access` is a realm OPTIONAL scope — Keycloak only includes it when the
+   token request contains `scope=openid github-full-access`)
+3. AuthBridge exchanges the token — once scope forwarding is implemented
+   ([#139](https://github.com/kagenti/kagenti-extensions/issues/139)), the exchanged
+   token will preserve the scope difference
+4. The GitHub tool checks for `REQUIRED_SCOPE` (`github-full-access`) in the exchanged token
+5. Tokens with the scope get the privileged PAT; tokens without get the public-only PAT
+
+> **Prerequisite:** You need a **private** GitHub repository that the `PRIVILEGED_ACCESS_PAT`
+> can access but the `PUBLIC_ACCESS_PAT` cannot. Replace `<your-org/your-private-repo>`
+> below with your own private repo.
+
+### 10a. Open a shell inside the test-client pod
+
+```bash
+kubectl run test-client --image=nicolaka/netshoot -n team1 --restart=Never -- sleep 3600 2>/dev/null
+kubectl wait --for=condition=ready pod/test-client -n team1 --timeout=30s
+kubectl exec -it test-client -n team1 -- sh
+```
+
+### 10b. Get agent credentials
+
+Inside the test-client pod, get the agent's client credentials (needed to request
+user tokens that include the agent's audience):
+
+```bash
+ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token \
+  -d "grant_type=password" \
+  -d "client_id=admin-cli" \
+  -d "username=admin" \
+  -d "password=admin" | jq -r ".access_token")
+
+SPIFFE_ID="spiffe://localtest.me/ns/team1/sa/git-issue-agent"
+CLIENTS=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "http://keycloak-service.keycloak.svc:8080/admin/realms/kagenti/clients" \
+  --data-urlencode "clientId=$SPIFFE_ID" --get)
+INTERNAL_ID=$(echo "$CLIENTS" | jq -r ".[0].id")
+CLIENT_ID=$(echo "$CLIENTS" | jq -r ".[0].clientId")
+CLIENT_SECRET=$(echo "$CLIENTS" | jq -r ".[0].secret")
+echo "Client ID: $CLIENT_ID  Secret length: ${#CLIENT_SECRET}"
+```
+
+### 10c. Test as Alice (public access only)
+
+Alice authenticates with Keycloak using `password` grant **without** requesting the
+`github-full-access` scope. Her token only has the default scopes.
+
+```bash
+ALICE_TOKEN=$(curl -s -X POST \
+  "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token" \
+  -d "grant_type=password" \
+  -d "username=alice" \
+  -d "password=alice123" \
+  --data-urlencode "client_id=$CLIENT_ID" \
+  --data-urlencode "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
+
+echo "Alice token length: ${#ALICE_TOKEN}"
+echo "Alice scopes: $(echo $ALICE_TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | jq -r '.scope')"
+```
+
+**Alice queries a public repo** (should succeed):
+
+```bash
+curl -s --max-time 300 \
+  -H "Authorization: Bearer $ALICE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -X POST http://git-issue-agent:8080/ \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "alice-public",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "role": "user",
+        "messageId": "msg-alice-1",
+        "parts": [{"type": "text", "text": "List issues in kagenti/kagenti repo"}]
+      }
+    }
+  }' | jq '.result.artifacts[0].parts[0].text' | head -5
+```
+
+**Alice queries a private repo** (should fail — PUBLIC_ACCESS_PAT cannot access it):
+
+```bash
+curl -s --max-time 300 \
+  -H "Authorization: Bearer $ALICE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -X POST http://git-issue-agent:8080/ \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "alice-private",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "role": "user",
+        "messageId": "msg-alice-2",
+        "parts": [{"type": "text", "text": "List issues in <your-org/your-private-repo>"}]
+      }
+    }
+  }' | jq '.result.artifacts[0].parts[0].text' | head -5
+```
+
+> **Expected:** Alice's request for the private repo fails because the GitHub tool
+> uses `PUBLIC_ACCESS_PAT`, which has no access to private repositories.
+
+### 10d. Test as Bob (privileged access)
+
+Bob authenticates with `scope=openid github-full-access`, explicitly requesting
+the privileged scope:
+
+```bash
+BOB_TOKEN=$(curl -s -X POST \
+  "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token" \
+  -d "grant_type=password" \
+  -d "username=bob" \
+  -d "password=bob123" \
+  -d "scope=openid github-full-access" \
+  --data-urlencode "client_id=$CLIENT_ID" \
+  --data-urlencode "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
+
+echo "Bob token length: ${#BOB_TOKEN}"
+echo "Bob scopes: $(echo $BOB_TOKEN | cut -d. -f2 | base64 -d 2>/dev/null | jq -r '.scope')"
+```
+
+**Bob queries the same private repo** (should succeed — PRIVILEGED_ACCESS_PAT has access):
+
+```bash
+curl -s --max-time 300 \
+  -H "Authorization: Bearer $BOB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -X POST http://git-issue-agent:8080/ \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "bob-private",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "role": "user",
+        "messageId": "msg-bob-1",
+        "parts": [{"type": "text", "text": "List issues in <your-org/your-private-repo>"}]
+      }
+    }
+  }' | jq '.result.artifacts[0].parts[0].text' | head -5
+```
+
+> **Expected:** Bob's request succeeds because the exchanged token contains
+> `github-full-access`, so the GitHub tool uses `PRIVILEGED_ACCESS_PAT`.
+
+### 10e. Verify scope-based PAT selection in tool logs
+
+Check the GitHub tool logs to confirm that different PATs were selected based on scopes:
+
+```bash
+exit
+kubectl logs deployment/github-tool -n team1 | grep -E "REQUIRED_SCOPE|scopes"
+```
+
+Expected output (two requests, different scope outcomes):
+
+```
+This OIDC user has scopes "openid email profile"
+The REQUIRED_SCOPE "github-full-access" NOT IN scopes [openid email profile]
+This OIDC user has scopes "openid email profile github-full-access"
+The REQUIRED_SCOPE "github-full-access" in scopes [openid email profile github-full-access]
+```
+
+### 10f. Clean up
 
 ```bash
 kubectl delete pod test-client -n team1 --ignore-not-found
