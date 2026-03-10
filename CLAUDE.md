@@ -200,9 +200,16 @@ When the webhook injects sidecars, the target namespace needs these ConfigMaps:
 |----------|------|---------|------|
 | `environments` | ConfigMap | client-registration | `KEYCLOAK_URL`, `KEYCLOAK_REALM` |
 | `keycloak-admin-secret` | Secret | client-registration | `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` |
-| `authbridge-config` | ConfigMap | envoy-proxy (ext-proc) | `TOKEN_URL`, `ISSUER`, `TARGET_AUDIENCE`, `TARGET_SCOPES` |
+| `authbridge-config` | ConfigMap | envoy-proxy (ext-proc) | `TOKEN_URL`, `ISSUER`, `TARGET_AUDIENCE`, `TARGET_SCOPES`, `DEFAULT_OUTBOUND_POLICY` |
+| `authproxy-routes` | ConfigMap (optional) | envoy-proxy (ext-proc) | `routes.yaml` — per-target token exchange routes |
 | `spiffe-helper-config` | ConfigMap | spiffe-helper | SPIFFE helper configuration file |
 | `envoy-config` | ConfigMap | envoy-proxy | Envoy YAML configuration |
+
+### Outbound Token Exchange Policy
+
+The go-processor defaults to **passthrough** for outbound requests that don't match any route in `authproxy-routes`. This means agents work out-of-the-box with any LLM provider (Ollama, OpenAI, etc.) without needing token exchange exclusions. Only hosts with explicit route entries in `authproxy-routes` get token exchange.
+
+Set `DEFAULT_OUTBOUND_POLICY: "exchange"` in `authbridge-config` to restore the legacy behavior (exchange for all outbound traffic when global config is set).
 
 ## Common Development Tasks
 

@@ -288,6 +288,11 @@ func (b *ContainerBuilder) BuildEnvoyProxyContainerWithSpireOption(spireEnabled 
 			MountPath: "/shared",
 			ReadOnly:  true,
 		},
+		{
+			Name:      "authproxy-routes",
+			MountPath: "/etc/authproxy",
+			ReadOnly:  true,
+		},
 	}
 	if spireEnabled {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
@@ -392,6 +397,22 @@ func (b *ContainerBuilder) BuildEnvoyProxyContainerWithSpireOption(spireEnabled 
 			{
 				Name:  "CLIENT_SECRET_FILE",
 				Value: "/shared/client-secret.txt",
+			},
+			{
+				Name:  "ROUTES_CONFIG_PATH",
+				Value: "/etc/authproxy/routes.yaml",
+			},
+			{
+				Name: "DEFAULT_OUTBOUND_POLICY",
+				ValueFrom: &corev1.EnvVarSource{
+					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: "authbridge-config",
+						},
+						Key:      "DEFAULT_OUTBOUND_POLICY",
+						Optional: ptr.To(true),
+					},
+				},
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{

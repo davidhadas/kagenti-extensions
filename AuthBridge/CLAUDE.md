@@ -64,16 +64,20 @@ The core ext-proc that handles both traffic directions:
 - Removes `x-authbridge-direction` header before forwarding to app
 
 **Outbound path** (no direction header):
-- Reads `Authorization: Bearer <token>` from request
-- Performs OAuth 2.0 Token Exchange (RFC 8693) against Keycloak
-- Replaces Authorization header with the exchanged token
-- If config is incomplete or exchange fails, passes request through unchanged
+- Resolves the destination host against `routes.yaml` (per-host exchange config)
+- If the host matches a `passthrough: true` route, forwards unchanged
+- If no route matches and `DEFAULT_OUTBOUND_POLICY` is `"passthrough"` (the default), forwards unchanged
+- If a route matches with audience/scopes, performs OAuth 2.0 Token Exchange (RFC 8693)
+- Replaces the Authorization header with the exchanged token on success
+- Returns 503 if exchange fails for a routed host (prevents unauthenticated calls)
 
 **Configuration loading:**
 - Waits up to 60s for credential files from client-registration (`waitForCredentials`)
 - Reads `CLIENT_ID` from `/shared/client-id.txt` (file) or `CLIENT_ID` env var (fallback)
 - Reads `CLIENT_SECRET` from `/shared/client-secret.txt` (file) or `CLIENT_SECRET` env var (fallback)
 - Static config from env vars: `TOKEN_URL`, `ISSUER`, `EXPECTED_AUDIENCE`, `TARGET_AUDIENCE`, `TARGET_SCOPES`
+- `DEFAULT_OUTBOUND_POLICY` env var: `"passthrough"` (default) or `"exchange"` (legacy)
+- Routes from `ROUTES_CONFIG_PATH` (default `/etc/authproxy/routes.yaml`)
 - JWKS URL is derived from TOKEN_URL: replaces `/token` suffix with `/certs`
 
 **Key types:**
@@ -156,14 +160,36 @@ There are **four** setup scripts for different demo scenarios:
 
 ## Required ConfigMaps for Webhook Injection
 
-When the kagenti-webhook injects sidecars, four ConfigMaps must exist in the target namespace. All are defined in `demos/webhook/k8s/configmaps-webhook.yaml`:
+When the kagenti-webhook injects sidecars, these ConfigMaps must exist in the target namespace. All required ones are defined in `demos/webhook/k8s/configmaps-webhook.yaml`:
 
-| ConfigMap | Consumer | Key Fields |
-|-----------|----------|------------|
-| `environments` | client-registration | `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD`, `SPIRE_ENABLED` |
-| `authbridge-config` | envoy-proxy (ext-proc) | `TOKEN_URL`, `ISSUER`, `TARGET_AUDIENCE`, `TARGET_SCOPES` |
-| `spiffe-helper-config` | spiffe-helper | `helper.conf` (SPIRE agent address, cert paths, JWT SVID config) |
-| `envoy-config` | envoy-proxy | `envoy.yaml` (full Envoy configuration) |
+| ConfigMap | Consumer | Required | Key Fields |
+|-----------|----------|----------|------------|
+| `environments` | client-registration | Yes | `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD`, `SPIRE_ENABLED` |
+| `authbridge-config` | envoy-proxy (ext-proc) | Yes | `TOKEN_URL`, `ISSUER`, `TARGET_AUDIENCE`, `TARGET_SCOPES`, `DEFAULT_OUTBOUND_POLICY` |
+| `authproxy-routes` | envoy-proxy (ext-proc) | No | `routes.yaml` — per-target token exchange routes (host, audience, scopes, passthrough) |
+| `spiffe-helper-config` | spiffe-helper | Yes (SPIRE) | `helper.conf` (SPIRE agent address, cert paths, JWT SVID config) |
+| `envoy-config` | envoy-proxy | Yes | `envoy.yaml` (full Envoy configuration) |
+
+### Outbound Token Exchange Policy
+
+The go-processor defaults to **passthrough** for outbound requests that don't match any route in `authproxy-routes`. This means agents work out-of-the-box with any LLM provider without configuring exclusions. Token exchange only happens for hosts with explicit entries in `authproxy-routes`.
+
+To configure per-target exchange, create an `authproxy-routes` ConfigMap:
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authproxy-routes
+data:
+  routes.yaml: |
+    - host: "target-service.team1.svc.cluster.local"
+      target_audience: "target-client-id"
+      token_scopes: "openid target-aud"
+    - host: "otel-collector.*.svc.cluster.local"
+      passthrough: true
+```
+
+Set `DEFAULT_OUTBOUND_POLICY: "exchange"` in `authbridge-config` to restore legacy behavior (exchange all outbound traffic).
 
 ## Shared Volume Contract
 
@@ -288,7 +314,7 @@ kubectl apply -f k8s/auth-target-deployment-webhook.yaml     # Target service
 
 3. **Keycloak port exclusion**: When using iptables interception, Keycloak's port (8080) must be excluded from redirect via `OUTBOUND_PORTS_EXCLUDE=8080`. Otherwise, token exchange requests from the ext-proc get redirected back to Envoy, creating a loop.
 
-4. **TLS passthrough is one-way**: Outbound HTTPS traffic passes through Envoy without token exchange. There is no mechanism to exchange tokens for HTTPS destinations. Only HTTP outbound traffic gets token exchange.
+4. **TLS passthrough is one-way**: Outbound HTTPS traffic passes through Envoy without token exchange via the TLS passthrough filter chain. Only plaintext HTTP outbound traffic reaches the ext_proc. With the default outbound policy of `"passthrough"`, even plaintext HTTP traffic is forwarded unchanged unless it matches an explicit route in `authproxy-routes`.
 
 5. **Virtualenv directory**: For local development you may create `AuthProxy/quickstart/venv/`, but it should be gitignored and is not committed to the repo.
 
