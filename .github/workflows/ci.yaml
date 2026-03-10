@@ -1,3 +1,8 @@
+# CI - Lint, test, and build for all modules
+#
+# Runs on PRs and pushes to main/release branches.
+# Covers both Go modules (kagenti-webhook, AuthProxy) and Python tests.
+#
 name: CI
 
 on:
@@ -5,26 +10,82 @@ on:
     branches:
       - main
       - "release-*"
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
 
 jobs:
-  ci-checks:
+  pre-commit:
+    name: Pre-commit Checks
     runs-on: ubuntu-latest
-    name: CI Checks
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417  # v6
         with:
           go-version-file: kagenti-webhook/go.mod
 
-      - name: Lint
-        run: find . -type f -name 'go.mod' -execdir go fmt ./... \;
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+        with:
+          python-version: '3.12'
 
-      - name: Static analysis
-        run: find . -type f -name 'go.mod' -execdir go vet ./... \;
+      - name: Run pre-commit
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd  # v3.0.1
+        env:
+          SKIP: ai-assisted-by-trailer
+
+  go-ci:
+    name: Go CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        module:
+          - path: kagenti-webhook
+            has_tests: true
+          - path: AuthBridge/AuthProxy
+            has_tests: false
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417  # v6
+        with:
+          go-version-file: ${{ matrix.module.path }}/go.mod
+          cache-dependency-path: ${{ matrix.module.path }}/go.sum
+
+      - name: Lint
+        working-directory: ${{ matrix.module.path }}
+        run: |
+          go fmt ./...
+          go vet ./...
 
       - name: Build
-        run: find . -type f -name 'go.mod' -execdir go build -v ./... \;
-        # TODO - make sure at least bare bone tests work
-        # - name: Test
-        #   run: find . -type f -name 'go.mod' -execdir go test -v ./... \;
+        working-directory: ${{ matrix.module.path }}
+        run: go build -v ./...
+
+      - name: Test
+        if: matrix.module.has_tests
+        working-directory: ${{ matrix.module.path }}
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+  python-test:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest python-keycloak pyjwt
+
+      - name: Run tests
+        run: pytest tests/ -v

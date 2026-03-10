@@ -1,0 +1,61 @@
+version: 2
+updates:
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Go - kagenti-webhook
+  - package-ecosystem: gomod
+    directory: /kagenti-webhook
+    schedule:
+      interval: weekly
+
+  # Go - AuthProxy
+  - package-ecosystem: gomod
+    directory: /AuthBridge/AuthProxy
+    schedule:
+      interval: weekly
+
+  # Python - root (tests)
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Python - client-registration
+  - package-ecosystem: pip
+    directory: /AuthBridge/client-registration
+    schedule:
+      interval: weekly
+
+  # Docker - kagenti-webhook
+  - package-ecosystem: docker
+    directory: /kagenti-webhook
+    schedule:
+      interval: weekly
+
+  # Docker - AuthProxy
+  - package-ecosystem: docker
+    directory: /AuthBridge/AuthProxy
+    schedule:
+      interval: weekly
+
+  # Docker - AuthProxy go-processor
+  - package-ecosystem: docker
+    directory: /AuthBridge/AuthProxy/go-processor
+    schedule:
+      interval: weekly
+
+  # Docker - AuthProxy quickstart demo-app
+  - package-ecosystem: docker
+    directory: /AuthBridge/AuthProxy/quickstart/demo-app
+    schedule:
+      interval: weekly
+
+  # Docker - client-registration
+  - package-ecosystem: docker
+    directory: /AuthBridge/client-registration
+    schedule:
+      interval: weekly
