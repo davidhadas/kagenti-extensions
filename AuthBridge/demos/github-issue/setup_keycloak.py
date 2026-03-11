@@ -386,6 +386,56 @@ def main():
         )
 
     # ---------------------------------------------------------------
+    # Add token exchange scopes to the agent's client (if it exists)
+    # ---------------------------------------------------------------
+    # The agent's Keycloak client is created dynamically by the
+    # client-registration sidecar when the agent pod starts. If the
+    # client already exists (from a prior deployment), realm-level
+    # optional scopes added after client creation won't be inherited.
+    # Explicitly add the scopes so client_credentials grants with
+    # scope=github-tool-aud+github-full-access succeed.
+    print(f"\n--- Adding scopes to agent client (if registered) ---")
+    agent_internal_id = keycloak_admin.get_client_id(agent_spiffe_id)
+    if agent_internal_id:
+        # Add the agent's own audience scope as a default so tokens issued
+        # via client_credentials include the agent's SPIFFE ID in `aud`.
+        try:
+            keycloak_admin.add_client_default_client_scope(
+                agent_internal_id, agent_spiffe_scope_id, {}
+            )
+            print(
+                f"Added '{scope_name}' as default scope on agent client."
+            )
+            print("  → client_credentials tokens will include the agent's SPIFFE ID in aud.")
+        except Exception as e:
+            print(f"Note: Could not add '{scope_name}' to agent client: {e}")
+
+        # Add token exchange scopes as optional so client_credentials grants
+        # with scope=github-tool-aud+github-full-access succeed.
+        for exchange_scope_name, exchange_scope_id in [
+            ("github-tool-aud", github_tool_scope_id),
+            ("github-full-access", github_full_access_scope_id),
+        ]:
+            try:
+                keycloak_admin.add_client_optional_client_scope(
+                    agent_internal_id, exchange_scope_id, {}
+                )
+                print(
+                    f"Added '{exchange_scope_name}' as optional scope on agent client."
+                )
+            except Exception as e:
+                print(
+                    f"Note: Could not add '{exchange_scope_name}' to agent client: {e}"
+                )
+    else:
+        print(
+            f"Agent client '{agent_spiffe_id}' not yet registered.\n"
+            f"  The scopes are realm-level defaults/optionals and will be inherited\n"
+            f"  when client-registration creates the client. If the agent was deployed\n"
+            f"  before this script, re-run it after the agent is running."
+        )
+
+    # ---------------------------------------------------------------
     # Create demo users
     # ---------------------------------------------------------------
     print("\n--- Creating demo users ---")
