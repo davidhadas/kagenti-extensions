@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kagenti-webhook.fullname" . }}-defaults
+  namespace: {{ include "kagenti-webhook.namespace" . }}
+  labels:
+    {{- include "kagenti-webhook.labels" . | nindent 4 }}
+    app.kubernetes.io/component: platform-defaults
+data:
+  config.yaml: |
+    {{- .Values.defaults | default dict | toYaml | nindent 4 }}

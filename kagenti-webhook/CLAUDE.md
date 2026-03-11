@@ -15,26 +15,41 @@ There is one registered webhook:
 
 | Webhook | Path | Handles |
 |---------|------|---------|
-| **AuthBridge** | `/mutate-workloads-authbridge` | Deployments, StatefulSets, DaemonSets, Jobs, CronJobs |
+| **AuthBridge** | `/mutate-workloads-authbridge` | Pods at CREATE time (works with any workload controller) |
 
 The `PodMutator` instance is created in `cmd/main.go` and passed to the webhook setup function.
 
 ### Injection Decision Flow
 
-**AuthBridge:**
-1. `kagenti.io/type` label must be `agent` or `tool` -- otherwise skip.
-2. `kagenti.io/inject: enabled` label forces injection ON.
-3. `kagenti.io/inject: disabled` (or any non-`enabled` value) forces injection OFF.
+**AuthBridge uses a two-stage decision process:**
+
+**Stage 1 — PodMutator pre-filters (any "no" skips ALL injection):**
+
+1. `kagenti.io/type` must be `agent` or `tool` — otherwise skip.
+2. `featureGates.globalEnabled` must be `true` — kill switch (cluster-wide).
+3. For tool workloads: `featureGates.injectTools` must be `true` — tools are not injected by default.
+4. `kagenti.io/inject: disabled` on the workload — whole-workload opt-out.
+
+**Stage 2 — PrecedenceEvaluator per-sidecar (independent for each sidecar):**
+
+Each sidecar independently passes through a two-layer chain:
+
+- L1: Per-sidecar feature gate (`featureGates.envoyProxy`, `.spiffeHelper`, `.clientRegistration`)
+- L2: Per-sidecar workload label (`kagenti.io/<sidecar>-inject: "false"` on pod template)
+
+`proxy-init` always mirrors the `envoy-proxy` decision and is never independently controlled.
 
 ### Injected Containers
 
-**Always injected:**
-- `proxy-init` (init container) -- iptables redirect setup.
+**Injected when envoy-proxy decision passes:**
+
+- `proxy-init` (init container) -- iptables redirect setup. Follows `envoy-proxy` decision exactly.
 - `envoy-proxy` (sidecar) -- Envoy service mesh proxy for traffic management.
 
-**Conditionally injected:**
-- `spiffe-helper` (sidecar) -- gated by `kagenti.io/spire: enabled` pod label. Obtains JWT-SVIDs from SPIRE agent.
-- `kagenti-client-registration` (sidecar) -- gated by `--enable-client-registration` flag (default `true`). Registers with Keycloak; uses SPIFFE identity when SPIRE is enabled, otherwise uses static `CLIENT_NAME`.
+**Injected by default, per-sidecar opt-out available:**
+
+- `spiffe-helper` (sidecar) -- obtains JWT-SVIDs from SPIRE agent. Opt out with `kagenti.io/spiffe-helper-inject: "false"` or `featureGates.spiffeHelper: false`.
+- `kagenti-client-registration` (sidecar) -- registers with Keycloak via SPIFFE identity. Opt out with `kagenti.io/client-registration-inject: "false"` or `featureGates.clientRegistration: false`.
 
 ## Directory Structure
 
@@ -42,7 +57,7 @@ The `PodMutator` instance is created in `cmd/main.go` and passed to the webhook 
 kagenti-webhook/
 ├── cmd/main.go                              # Entrypoint: flags, manager setup, webhook registration
 ├── internal/webhook/
-│   ├── config/                              # Platform configuration (not yet wired into injector)
+│   ├── config/                              # Platform configuration (wired into PodMutator)
 │   │   ├── types.go                         #   PlatformConfig struct (images, proxy, resources, etc.)
 │   │   ├── defaults.go                      #   CompiledDefaults() hardcoded fallback config
 │   │   ├── feature_gates.go                 #   FeatureGates struct (global sidecar enable/disable)
@@ -53,14 +68,16 @@ kagenti-webhook/
 │   │   ├── container_builder.go             #   Build* functions for each injected container
 │   │   └── volume_builder.go                #   BuildRequiredVolumes / BuildRequiredVolumesNoSpire
 │   └── v1alpha1/                            # Webhook handlers
-│       ├── authbridge_webhook.go            #   AuthBridge: raw admission.Handler
+│       ├── authbridge_webhook.go            #   AuthBridge: raw admission.Handler (Pod-level)
+│       ├── authbridge_webhook_test.go       #   Webhook handler tests (Ginkgo)
 │       └── webhook_suite_test.go            #   ENVTEST-based test setup (Ginkgo)
 ├── config/                                  # Kustomize manifests (CRDs, RBAC, webhook configs, etc.)
 ├── test/
 │   ├── e2e/                                 # End-to-end tests (Kind cluster, Ginkgo)
 │   └── utils/                               # Test helpers (Run, LoadImageToKind, CertManager, etc.)
 ├── scripts/
-│   └── webhook-rollout.sh                   # Build + deploy to Kind cluster script
+│   ├── webhook-rollout.sh                   # Build + deploy to Kind cluster script
+│   └── test-precedence.sh                   # Automated end-to-end test runner for the precedence system
 ├── Makefile                                 # Build, test, deploy targets
 ├── Dockerfile                               # Multi-stage Go build -> distroless
 ├── go.mod / go.sum                          # Go 1.24, controller-runtime v0.22
@@ -144,17 +161,22 @@ make generate
 
 ### Architecture Patterns
 - **Shared PodMutator**: The `injector.PodMutator` instance is created in `main()` and passed to the webhook setup function. This ensures consistent mutation logic.
-- **Single mutation path**: `InjectAuthBridge()` handles all injection decisions; SPIRE is optional based on pod/namespace labels.
+- **Single mutation path**: `InjectAuthBridge()` handles all injection decisions. SPIRE integration is optional and controlled by per-sidecar workload labels and feature gates.
 - **Idempotency**: `AuthBridgeWebhook.isAlreadyInjected()` checks for existing sidecars before injection.
 - **Container existence checks**: `containerExists()` and `volumeExists()` helpers prevent duplicate injection.
 - **Kubebuilder markers**: Webhook path markers (e.g., `+kubebuilder:webhook:path=...`) in Go comments generate the webhook manifests. Do not change these without running `make manifests`.
 
-### ConfigMap Dependencies at Runtime
-Injected sidecars expect these ConfigMaps to exist in the target namespace:
-- `environments` -- `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD`
+### Runtime Dependencies
+Injected sidecars expect these resources to exist in the target namespace:
+
+ConfigMaps:
+- `environments` -- `KEYCLOAK_URL`, `KEYCLOAK_REALM`
 - `authbridge-config` -- `TOKEN_URL`, `ISSUER`, `TARGET_AUDIENCE`, `TARGET_SCOPES`
 - `spiffe-helper-config` -- SPIFFE helper configuration (when SPIRE is enabled)
 - `envoy-config` -- Envoy proxy configuration
+
+Secrets:
+- `keycloak-admin-secret` -- `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD`
 
 ### Security Model
 - `proxy-init` runs as an init container with a short lifetime (iptables setup).
@@ -178,20 +200,16 @@ Injected sidecars expect these ConfigMaps to exist in the target namespace:
 5. Update `isAlreadyInjected()` in `authbridge_webhook.go` to check for the new container name.
 6. Update `internal/webhook/config/types.go` and `defaults.go` with image/resource defaults.
 
-### Adding a New Supported Workload Type
-1. Add a new `case` in `AuthBridgeWebhook.Handle()` in `authbridge_webhook.go`.
-2. Update the kubebuilder webhook marker to include the new resource in the `resources` list.
-3. Run `make manifests` to regenerate webhook configuration YAML.
-4. Update `scripts/webhook-rollout.sh` to include the new resource in the webhook rules.
-5. Update the Helm chart template `charts/kagenti-webhook/templates/authbridge-mutatingwebhook.yaml`.
+### Webhook Targeting Model
+The webhook targets **Pods at CREATE time** (not Deployments/StatefulSets/etc.). This follows the same pattern used by Istio, Linkerd, and Vault Agent Injector. The handler decodes `corev1.Pod` directly — no switch on workload Kind. The `deriveWorkloadName()` helper extracts the workload name from `GenerateName` (trims trailing `-`). The `reinvocationPolicy` is set to `IfNeeded` so our webhook re-runs if other webhooks modify the Pod after our first pass.
 
 ### Modifying Injection Logic
 - Injection decision logic lives in `pod_mutator.go` in `InjectAuthBridge()`.
 - Changes to label/annotation keys require updating the constants at the top of `pod_mutator.go`.
 
 ### Updating Container Images
-- Default images are defined as constants in `injector/container_builder.go` (`DefaultEnvoyImage`, `DefaultProxyInitImage`) and inline in `BuildSpiffeHelperContainer()` and `BuildClientRegistrationContainerWithSpireOption()`.
-- The `internal/webhook/config/defaults.go` file has a parallel set of defaults in `CompiledDefaults()` -- keep them in sync (or wire the config system into the injector, which is a TODO).
+- Default images are defined in `internal/webhook/config/defaults.go` via `CompiledDefaults()`. The `ContainerBuilder` reads from `*config.PlatformConfig` at build time — never hardcode images/ports/resources in the builder.
+- The config system is fully wired in: `PodMutator` uses getter functions `func() *config.PlatformConfig` and creates a new `ContainerBuilder` per request with the current config snapshot, enabling hot-reload.
 - The GitHub Actions CI builds images defined in `../.github/workflows/build.yaml`.
 
 ### Helm Chart
@@ -201,11 +219,11 @@ Injected sidecars expect these ConfigMaps to exist in the target namespace:
 
 ## Gotchas and Known Issues
 
-1. **Config system not wired in**: `internal/webhook/config/` (PlatformConfig, FeatureGates, loaders) exists but is **not yet used** by the injector. Container builder still uses hardcoded constants. This is a known gap.
+1. **Config system is wired in**: `internal/webhook/config/` (PlatformConfig, FeatureGates, loaders) is used by `PodMutator` and `ContainerBuilder`. Feature gates support hot-reload via `FeatureGateLoader`. Platform config (images, ports, resources) is loaded at startup from the `kagenti-webhook-defaults` ConfigMap.
 
 2. **Kubebuilder markers**: The `+kubebuilder:webhook` comments generate webhook manifests. If you change the path, resources, or groups, you must run `make manifests` to regenerate.
 
-3. **AuthBridge uses raw admission.Handler**: Unlike webhooks that use `CustomDefaulter`/`CustomValidator`, the AuthBridge webhook registers directly via `mgr.GetWebhookServer().Register()`. This is because it handles multiple resource types in a single handler.
+3. **AuthBridge uses raw admission.Handler**: Unlike webhooks that use `CustomDefaulter`/`CustomValidator`, the AuthBridge webhook registers directly via `mgr.GetWebhookServer().Register()`. It decodes `corev1.Pod` directly and includes a Kind guard for defense-in-depth against stale webhook configs.
 
 4. **Idempotency check**: `isAlreadyInjected()` checks for all four injected components (`envoy-proxy`, `spiffe-helper`, `kagenti-client-registration` in sidecar containers, `proxy-init` in init containers). If any one is found, re-admission is short-circuited.
 

@@ -7,15 +7,20 @@ type FeatureGates struct {
 	EnvoyProxy         bool `json:"envoyProxy" yaml:"envoyProxy"`
 	SpiffeHelper       bool `json:"spiffeHelper" yaml:"spiffeHelper"`
 	ClientRegistration bool `json:"clientRegistration" yaml:"clientRegistration"`
+	// InjectTools controls whether tool workloads (kagenti.io/type=tool) receive
+	// sidecar injection. Defaults to false — tools are not injected by default.
+	InjectTools bool `json:"injectTools" yaml:"injectTools"`
 }
 
-// DefaultFeatureGates returns feature gates with everything enabled.
+// DefaultFeatureGates returns feature gates with sidecar injection enabled for
+// agents and disabled for tools.
 func DefaultFeatureGates() *FeatureGates {
 	return &FeatureGates{
 		GlobalEnabled:      true,
 		EnvoyProxy:         true,
 		SpiffeHelper:       true,
 		ClientRegistration: true,
+		InjectTools:        false,
 	}
 }
 

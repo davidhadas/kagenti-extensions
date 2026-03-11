@@ -54,8 +54,8 @@ def _load_functions():
     # still get the function definitions.
     try:
         exec(code, mod.__dict__)
-    except (ValueError, Exception):
-        pass  # Top-level code fails — that's expected
+    except (ValueError, SystemExit):
+        pass  # Top-level code fails on missing env vars / exit(1)
 
     return mod
 

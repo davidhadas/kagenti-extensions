@@ -16,6 +16,6 @@ type InjectionDecision struct {
 }
 
 // AnyInjected returns true if at least one sidecar will be injected.
-func (d InjectionDecision) AnyInjected() bool {
+func (d *InjectionDecision) AnyInjected() bool {
 	return d.EnvoyProxy.Inject || d.SpiffeHelper.Inject || d.ClientRegistration.Inject
 }

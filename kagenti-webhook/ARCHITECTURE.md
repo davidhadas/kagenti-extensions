@@ -25,17 +25,10 @@ graph TB
     end
 
     subgraph "Kubernetes Resources"
-        subgraph "Standard Workloads"
-            DEPLOY[Deployments]
-            STS[StatefulSets]
-            DS[DaemonSets]
-            JOB[Jobs/CronJobs]
-        end
-
-        NAMESPACE[Namespace<br/>with labels/annotations]
+        POD[Pods at CREATE]
     end
 
-    API -->|mutate workloads| AUTH
+    API -->|mutate pods| AUTH
 
     MAIN -->|creates & shares| MUTATOR
     MAIN -->|registers| AUTH
@@ -44,28 +37,21 @@ graph TB
 
     MUTATOR -->|builds containers| CONT
     MUTATOR -->|builds volumes| VOL
-    MUTATOR -->|reads labels| NAMESPACE
 
-    AUTH -.->|modifies| DEPLOY
-    AUTH -.->|modifies| STS
-    AUTH -.->|modifies| DS
-    AUTH -.->|modifies| JOB
+    AUTH -.->|modifies| POD
 
     style MUTATOR fill:#90EE90
     style AUTH fill:#32CD32,stroke:#006400,stroke-width:3px
     style CONT fill:#FFB6C1
     style VOL fill:#FFB6C1
-    style DEPLOY fill:#87CEEB
-    style STS fill:#87CEEB
-    style DS fill:#87CEEB
-    style JOB fill:#87CEEB
+    style POD fill:#87CEEB
 ```
 
 ## Container Injection Flow
 
-### With SPIRE Integration
+### Default (all sidecars injected)
 
-When `kagenti.io/spire: enabled` label is set on the pod template:
+All four sidecars are injected when no opt-out labels are present:
 
 ```mermaid
 graph LR
@@ -99,9 +85,9 @@ graph LR
     style APP fill:#87CEEB
 ```
 
-### Without SPIRE Integration
+### Without SPIRE (opt-out via `kagenti.io/spiffe-helper-inject: "false"`)
 
-When `kagenti.io/spire` label is **not** set (default):
+When spiffe-helper is disabled, only envoy-proxy and proxy-init are injected:
 
 ```mermaid
 graph LR
@@ -127,26 +113,53 @@ graph LR
 
 ```mermaid
 graph TD
-    START[Webhook Receives<br/>Admission Request]
+    START[Webhook Receives Admission Request]
 
-    CHECK_TYPE{kagenti.io/type<br/>= agent or tool?}
-    CHECK_INJECT{kagenti.io/inject<br/>= enabled?}
-    CHECK_SPIRE{kagenti.io/spire<br/>= enabled?}
+    subgraph "Stage 1 — PodMutator pre-filters"
+        CHECK_TYPE{kagenti.io/type\n= agent or tool?}
+        CHECK_GLOBAL{featureGates\n.globalEnabled?}
+        CHECK_TOOLS{type=tool AND\nfeatureGates.injectTools=false?}
+        CHECK_OPTOUT{kagenti.io/inject\n= disabled?}
+    end
 
-    INJECT_FULL[Inject: proxy-init<br/>envoy-proxy, spiffe-helper<br/>client-registration]
-    INJECT_BASIC[Inject: proxy-init<br/>envoy-proxy only]
+    subgraph "Stage 2 — PrecedenceEvaluator per sidecar"
+        EVAL[Per-sidecar 2-layer chain\nL1: per-sidecar feature gate\nL2: workload opt-out label]
+        INJECT[Inject sidecars per decision\nproxy-init follows envoy-proxy]
+    end
+
     SKIP[Skip Injection]
 
     START --> CHECK_TYPE
     CHECK_TYPE -->|No| SKIP
-    CHECK_TYPE -->|Yes| CHECK_INJECT
-    CHECK_INJECT -->|enabled| CHECK_SPIRE
-    CHECK_INJECT -->|other / missing| SKIP
+    CHECK_TYPE -->|Yes| CHECK_GLOBAL
+    CHECK_GLOBAL -->|false| SKIP
+    CHECK_GLOBAL -->|true| CHECK_TOOLS
+    CHECK_TOOLS -->|Yes| SKIP
+    CHECK_TOOLS -->|No| CHECK_OPTOUT
+    CHECK_OPTOUT -->|disabled| SKIP
+    CHECK_OPTOUT -->|other/absent| EVAL
+    EVAL --> INJECT
 
-    CHECK_SPIRE -->|Yes| INJECT_FULL
-    CHECK_SPIRE -->|No| INJECT_BASIC
-
-    style INJECT_FULL fill:#32CD32
-    style INJECT_BASIC fill:#4169E1
+    style INJECT fill:#32CD32
     style SKIP fill:#D3D3D3
 ```
+
+## Sidecar Injection Rules
+
+### Stage 1 pre-filters (all-or-nothing)
+
+| # | Check | Label / Config | Skip condition |
+| --- | --- | --- | --- |
+| 1 | Workload type | `kagenti.io/type` on workload | Not `agent` or `tool` |
+| 2 | Global kill switch | `featureGates.globalEnabled` in Helm values | `false` |
+| 3 | Tool gate | `featureGates.injectTools` in Helm values | Type is `tool` AND gate is `false` (default) |
+| 4 | Whole-workload opt-out | `kagenti.io/inject: disabled` on workload | Label explicitly set |
+
+### Stage 2 per-sidecar chain (independent per sidecar)
+
+| Layer | Config | Effect |
+| --- | --- | --- |
+| 1. Per-sidecar feature gate | `featureGates.envoyProxy / .spiffeHelper / .clientRegistration` | Disables sidecar cluster-wide |
+| 2. Workload opt-out label | `kagenti.io/envoy-proxy-inject: "false"` etc. on pod template | Disables sidecar for that workload |
+
+`proxy-init` is not independently evaluated — it always mirrors the `envoy-proxy` decision.

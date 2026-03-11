@@ -24,6 +24,7 @@ produce identical AuthBridge security behavior.
 3. **Transparent token exchange** — When the agent calls the GitHub tool, AuthBridge exchanges the token automatically
 4. **Subject preservation** — The end user's identity (`sub` claim) is preserved through the exchange
 5. **Scope-based access** — The tool uses token scopes to determine public or privileged GitHub API access
+6. **Access control (Alice vs Bob)** — Two users with different scopes get different GitHub API access levels: Alice (public only) cannot access private repos, while Bob (privileged) can access both (requires scope forwarding: [kagenti-extensions#139](https://github.com/kagenti/kagenti-extensions/issues/139))
 
 ## Architecture Overview
 

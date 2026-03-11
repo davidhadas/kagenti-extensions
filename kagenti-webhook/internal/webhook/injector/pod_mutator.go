@@ -35,19 +35,25 @@ const (
 	SpiffeHelperContainerName       = "spiffe-helper"
 	ClientRegistrationContainerName = "kagenti-client-registration"
 
-	// Label selector for authbridge injection.
-	// Injection uses opt-in semantics: only AuthBridgeInjectValue triggers
-	// injection; any other value (including AuthBridgeDisabledValue, absent,
-	// or unrecognised) skips injection. AuthBridgeDisabledValue is a
-	// conventional opt-out spelling — it is not special-cased in code.
+	// Label selector for authbridge injection opt-out.
+	// Injection uses opt-out semantics for agents: sidecars are injected by
+	// default. Setting AuthBridgeInjectLabel=AuthBridgeDisabledValue on a
+	// workload explicitly opts it out. Any other value (including absent) does
+	// not block injection.
 	AuthBridgeInjectLabel   = "kagenti.io/inject"
-	AuthBridgeInjectValue   = "enabled"
+	AuthBridgeInjectValue   = "enabled" // retained for backwards compat / tests
 	AuthBridgeDisabledValue = "disabled"
 
-	// Label selector for SPIRE enablement
+	// SPIRE opt-out label. Setting kagenti.io/spire=disabled on a workload blocks
+	// spiffe-helper injection (layer 7 of the precedence chain). Any other value
+	// (including absence of the label) leaves spiffe-helper injection to the
+	// upstream precedence layers.
 	SpireEnableLabel   = "kagenti.io/spire"
-	SpireEnabledValue  = "enabled"
 	SpireDisabledValue = "disabled"
+	// SpireEnabledValue is a non-operative label value under the opt-out model.
+	// Retained as a named constant so tests can assert that a non-disabled value
+	// does not block injection.
+	SpireEnabledValue = "enabled"
 	// Istio exclusion annotations
 	IstioSidecarInjectAnnotation = "sidecar.istio.io/inject"
 	AmbientRedirectionAnnotation = "ambient.istio.io/redirection"
@@ -63,7 +69,6 @@ const (
 type PodMutator struct {
 	Client                   client.Client
 	EnableClientRegistration bool
-	Builder                  *ContainerBuilder
 	// Getter functions for hot-reloadable config (used by precedence evaluator)
 	GetPlatformConfig func() *config.PlatformConfig
 	GetFeatureGates   func() *config.FeatureGates
@@ -75,11 +80,9 @@ func NewPodMutator(
 	getPlatformConfig func() *config.PlatformConfig,
 	getFeatureGates func() *config.FeatureGates,
 ) *PodMutator {
-	cfg := getPlatformConfig()
 	return &PodMutator{
 		Client:                   client,
 		EnableClientRegistration: enableClientRegistration,
-		Builder:                  NewContainerBuilder(cfg),
 		GetPlatformConfig:        getPlatformConfig,
 		GetFeatureGates:          getFeatureGates,
 	}
@@ -89,7 +92,7 @@ func NewPodMutator(
 func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSpec, namespace, crName string, labels map[string]string) (bool, error) {
 	mutatorLog.Info("InjectAuthBridge called", "namespace", namespace, "crName", crName, "labels", labels)
 
-	// Pre-filter: only agent/tool workloads are eligible
+	// Pre-filter: kagenti.io/type must be agent or tool.
 	kagentiType, hasKagentiLabel := labels[KagentiTypeLabel]
 	if !hasKagentiLabel || (kagentiType != KagentiTypeAgent && kagentiType != KagentiTypeTool) {
 		mutatorLog.Info("Skipping mutation: workload is not an agent or a tool",
@@ -98,32 +101,34 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		return false, nil
 	}
 
-	// Opt-in: injection only proceeds when kagenti.io/inject=enabled is
-	// explicitly set on the workload. A missing label or any other value
-	// (including "disabled") skips injection. This prevents sidecars from
-	// being injected into workloads that never requested them — consistent
-	// with the existing opt-in behaviour of kagenti.io/spire=enabled.
-	if labels[AuthBridgeInjectLabel] != AuthBridgeInjectValue {
-		mutatorLog.Info("Skipping mutation: kagenti.io/inject not set to enabled",
-			"namespace", namespace, "crName", crName,
-			"value", labels[AuthBridgeInjectLabel])
-		return false, nil
-	}
-
-	// Fetch namespace labels for the precedence evaluator
-	ns := &corev1.Namespace{}
-	if err := m.Client.Get(ctx, client.ObjectKey{Name: namespace}, ns); err != nil {
-		mutatorLog.Error(err, "Failed to fetch namespace", "namespace", namespace)
-		return false, fmt.Errorf("failed to fetch namespace: %w", err)
-	}
-
 	// Get fresh config snapshots for this request (hot-reloadable)
 	currentConfig := m.GetPlatformConfig()
 	currentGates := m.GetFeatureGates()
 
-	// Evaluate the precedence chain
+	// Global kill switch — disables all injection cluster-wide.
+	if !currentGates.GlobalEnabled {
+		mutatorLog.Info("Skipping mutation: global feature gate disabled",
+			"namespace", namespace, "crName", crName)
+		return false, nil
+	}
+
+	// Tool workloads are only injected when the injectTools feature gate is on.
+	if kagentiType == KagentiTypeTool && !currentGates.InjectTools {
+		mutatorLog.Info("Skipping mutation: tool injection disabled via injectTools feature gate",
+			"namespace", namespace, "crName", crName)
+		return false, nil
+	}
+
+	// Opt-out: skip injection when kagenti.io/inject=disabled is explicitly set.
+	if labels[AuthBridgeInjectLabel] == AuthBridgeDisabledValue {
+		mutatorLog.Info("Skipping mutation: workload opted out via kagenti.io/inject=disabled",
+			"namespace", namespace, "crName", crName)
+		return false, nil
+	}
+
+	// Evaluate the per-sidecar precedence chain
 	evaluator := NewPrecedenceEvaluator(currentGates, currentConfig)
-	decision := evaluator.Evaluate(ns.Labels, labels, nil)
+	decision := evaluator.Evaluate(labels)
 
 	// Log each sidecar decision
 	for _, d := range []struct {
@@ -202,9 +207,9 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 	} else {
 		requiredVolumes = BuildRequiredVolumesNoSpire()
 	}
-	for _, vol := range requiredVolumes {
-		if !volumeExists(podSpec.Volumes, vol.Name) {
-			podSpec.Volumes = append(podSpec.Volumes, vol)
+	for i := range requiredVolumes {
+		if !volumeExists(podSpec.Volumes, requiredVolumes[i].Name) {
+			podSpec.Volumes = append(podSpec.Volumes, requiredVolumes[i])
 		}
 	}
 
@@ -237,8 +242,7 @@ func (m *PodMutator) ensureServiceAccount(ctx context.Context, namespace, name s
 		if apierrors.IsAlreadyExists(err) {
 			existing := &corev1.ServiceAccount{}
 			if getErr := m.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, existing); getErr != nil {
-				mutatorLog.Error(getErr, "Failed to fetch existing ServiceAccount", "namespace", namespace, "name", name)
-				return nil
+				return fmt.Errorf("failed to fetch existing ServiceAccount %s/%s: %w", namespace, name, getErr)
 			}
 			if existing.Labels[managedByLabel] != managedByValue {
 				mutatorLog.Info("WARNING: ServiceAccount exists but is not managed by this webhook",
@@ -249,15 +253,15 @@ func (m *PodMutator) ensureServiceAccount(ctx context.Context, namespace, name s
 			}
 			return nil
 		}
-		return err
+		return fmt.Errorf("failed to create ServiceAccount %s/%s: %w", namespace, name, err)
 	}
 	mutatorLog.Info("Created ServiceAccount", "namespace", namespace, "name", name)
 	return nil
 }
 
 func containerExists(containers []corev1.Container, name string) bool {
-	for _, container := range containers {
-		if container.Name == name {
+	for i := range containers {
+		if containers[i].Name == name {
 			return true
 		}
 	}
@@ -265,8 +269,8 @@ func containerExists(containers []corev1.Container, name string) bool {
 }
 
 func volumeExists(volumes []corev1.Volume, name string) bool {
-	for _, vol := range volumes {
-		if vol.Name == name {
+	for i := range volumes {
+		if volumes[i].Name == name {
 			return true
 		}
 	}

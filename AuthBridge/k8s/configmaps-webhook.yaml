@@ -17,27 +17,14 @@ data:
   SPIRE_ENABLED: "true"
   KEYCLOAK_URL: "http://keycloak-service.keycloak.svc:8080"
   KEYCLOAK_REALM: "demo"
-  # Comma-separated list of Keycloak client IDs that should receive the agent's
-  # audience scope. This allows existing clients (like the UI) to include the
-  # agent's audience in their tokens without manual Keycloak configuration.
-  # Default: "kagenti" (the platform UI client)
-  # PLATFORM_CLIENT_IDS: "kagenti"
-
----
-# keycloak-admin-secret - Keycloak admin credentials for client registration
-# Replace the placeholder values with your actual admin credentials.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: keycloak-admin-secret
-  namespace: team1
-type: Opaque
-stringData:
+  # Demo/development only: do NOT use hardcoded admin credentials in production.
+  # For production deployments, supply these via a Kubernetes Secret and reference
+  # them from your Pod/Deployment using env.valueFrom.secretKeyRef instead of this ConfigMap.
   KEYCLOAK_ADMIN_USERNAME: "admin"
   KEYCLOAK_ADMIN_PASSWORD: "admin"
 
 ---
-# authbridge-config ConfigMap - Used by envoy-proxy for token exchange and inbound validation
+# authbridge-config ConfigMap - Used by envoy-proxy for token exchange
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -48,44 +35,8 @@ data:
   # ISSUER: Required. Keycloak frontend URL used as token issuer for inbound JWT validation.
   # Must match the "iss" claim in tokens (Keycloak's frontend URL).
   ISSUER: "http://keycloak.localtest.me:8080/realms/demo"
-  # EXPECTED_AUDIENCE: Optional. Expected audience for inbound JWT validation.
-  # For SPIFFE-based deployments, this should match the agent's SPIFFE ID.
-  # Format: spiffe://localtest.me/ns/<namespace>/sa/<service-account>
-  # Update this value if deploying to a different namespace or using a different service account.
-  # If not set, audience validation is skipped (issuer and signature validation still occur).
-  EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/team1/sa/agent"
-  # TARGET_AUDIENCE and TARGET_SCOPES: Fallback values for token exchange when a
-  # route in authproxy-routes matches but doesn't specify its own audience/scopes.
   TARGET_AUDIENCE: "auth-target"
   TARGET_SCOPES: "openid auth-target-aud"
-  # DEFAULT_OUTBOUND_POLICY: Controls behavior for outbound requests that don't
-  # match any route in authproxy-routes. Default is "passthrough" (skip exchange).
-  # Set to "exchange" to restore legacy behavior (exchange all outbound traffic).
-  # DEFAULT_OUTBOUND_POLICY: "passthrough"
-
----
-# authproxy-routes ConfigMap (optional) - Per-target token exchange routes
-#
-# Defines which outbound hosts should get token exchange. All other hosts pass
-# through unchanged when DEFAULT_OUTBOUND_POLICY is "passthrough" (the default).
-#
-# If this ConfigMap does not exist, no outbound token exchange occurs (all
-# traffic passes through). Create it only when your agents need to authenticate
-# to specific services via Keycloak token exchange.
-#
-# Example:
-#   apiVersion: v1
-#   kind: ConfigMap
-#   metadata:
-#     name: authproxy-routes
-#     namespace: team1
-#   data:
-#     routes.yaml: |
-#       - host: "auth-target.team1.svc.cluster.local"
-#         target_audience: "auth-target"
-#         token_scopes: "openid auth-target-aud"
-#       - host: "otel-collector.*.svc.cluster.local"
-#         passthrough: true
 
 ---
 # spiffe-helper-config ConfigMap - Used by spiffe-helper container (SPIRE mode only)
@@ -134,23 +85,8 @@ data:
         - name: envoy.filters.listener.original_dst
           typed_config:
             "@type": type.googleapis.com/envoy.extensions.filters.listener.original_dst.v3.OriginalDst
-        - name: envoy.filters.listener.tls_inspector
-          typed_config:
-            "@type": type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
         filter_chains:
-        # TLS passthrough: forward HTTPS traffic as-is via TCP proxy
-        - filter_chain_match:
-            transport_protocol: tls
-          filters:
-          - name: envoy.filters.network.tcp_proxy
-            typed_config:
-              "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
-              stat_prefix: outbound_tls_passthrough
-              cluster: original_destination
-        # Plaintext HTTP: inspect and process via ext_proc
-        - filter_chain_match:
-            transport_protocol: raw_buffer
-          filters:
+        - filters:
           - name: envoy.filters.network.http_connection_manager
             typed_config:
               "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
@@ -205,19 +141,17 @@ data:
                 virtual_hosts:
                 - name: local_app
                   domains: ["*"]
+                  request_headers_to_add:
+                  - header:
+                      key: "x-authbridge-direction"
+                      value: "inbound"
+                    append: false
                   routes:
                   - match:
                       prefix: "/"
                     route:
                       cluster: original_destination
               http_filters:
-              - name: envoy.filters.http.lua
-                typed_config:
-                  "@type": type.googleapis.com/envoy.extensions.filters.http.lua.v3.Lua
-                  inline_code: |
-                    function envoy_on_request(request_handle)
-                      request_handle:headers():add("x-authbridge-direction", "inbound")
-                    end
               - name: envoy.filters.http.ext_proc
                 typed_config:
                   "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor

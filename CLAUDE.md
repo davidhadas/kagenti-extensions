@@ -2,6 +2,10 @@
 
 This file provides context for Claude (AI assistant) when working with the `kagenti-extensions` monorepo.
 
+## AI Assistant Instructions
+
+- **No attribution** in commits, PR bodies, or issues — do not add "Co-Authored-By: Claude", "Generated with Claude Code", or any AI attribution.
+
 ## Repository Overview
 
 **kagenti-extensions** is a monorepo containing Kubernetes security extensions for the [Kagenti](https://github.com/kagenti/kagenti) ecosystem. It provides **zero-trust authentication** for Kubernetes workloads through automatic sidecar injection, transparent token exchange, and dynamic Keycloak client registration using SPIFFE/SPIRE identities.
@@ -44,9 +48,9 @@ A Kubernetes **mutating admission webhook** that intercepts workload creation (D
 
 **Key facts:**
 - Webhook: **AuthBridge** at `/mutate-workloads-authbridge`
-- Injection controlled via pod labels (`kagenti.io/type`, `kagenti.io/inject`, `kagenti.io/spire`) and namespace labels (`kagenti-enabled: "true"`)
+- Injection controlled via pod labels (`kagenti.io/type`, `kagenti.io/inject`) and per-sidecar opt-out labels (`kagenti.io/envoy-proxy-inject`, `kagenti.io/spiffe-helper-inject`, `kagenti.io/client-registration-inject`)
 - Shared `PodMutator` instance (in `internal/webhook/injector/`)
-- Injects: `proxy-init` (init), `envoy-proxy`, `spiffe-helper` (gated by `kagenti.io/spire` label), `kagenti-client-registration` (gated by `--enable-client-registration` flag)
+- Injects: `proxy-init` (init), `envoy-proxy`, `spiffe-helper`, `kagenti-client-registration` — all opt-out via workload labels or feature gates
 - Build: `cd kagenti-webhook && make build` / `make test` / `make docker-build`
 - Local dev: `cd kagenti-webhook && make local-dev CLUSTER=<kind-cluster>`
 
@@ -196,12 +200,20 @@ Hooks:
 
 When the webhook injects sidecars, the target namespace needs these ConfigMaps:
 
-| ConfigMap | Used by | Keys |
-|-----------|---------|------|
-| `environments` | client-registration | `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` |
-| `authbridge-config` | envoy-proxy (ext-proc) | `TOKEN_URL`, `ISSUER`, `TARGET_AUDIENCE`, `TARGET_SCOPES` |
-| `spiffe-helper-config` | spiffe-helper | SPIFFE helper configuration file |
-| `envoy-config` | envoy-proxy | Envoy YAML configuration |
+| Resource | Kind | Used by | Keys |
+|----------|------|---------|------|
+| `environments` | ConfigMap | client-registration | `KEYCLOAK_URL`, `KEYCLOAK_REALM` |
+| `keycloak-admin-secret` | Secret | client-registration | `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` |
+| `authbridge-config` | ConfigMap | envoy-proxy (ext-proc) | `TOKEN_URL`, `ISSUER`, `TARGET_AUDIENCE`, `TARGET_SCOPES`, `DEFAULT_OUTBOUND_POLICY` |
+| `authproxy-routes` | ConfigMap (optional) | envoy-proxy (ext-proc) | `routes.yaml` — per-target token exchange routes |
+| `spiffe-helper-config` | ConfigMap | spiffe-helper | SPIFFE helper configuration file |
+| `envoy-config` | ConfigMap | envoy-proxy | Envoy YAML configuration |
+
+### Outbound Token Exchange Policy
+
+The go-processor defaults to **passthrough** for outbound requests that don't match any route in `authproxy-routes`. This means agents work out-of-the-box with any LLM provider (Ollama, OpenAI, etc.) without needing token exchange exclusions. Only hosts with explicit route entries in `authproxy-routes` get token exchange.
+
+Set `DEFAULT_OUTBOUND_POLICY: "exchange"` in `authbridge-config` to restore the legacy behavior (exchange for all outbound traffic when global config is set).
 
 ## Common Development Tasks
 

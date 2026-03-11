@@ -81,7 +81,7 @@ AUTHBRIDGE_DEMO=true AUTHBRIDGE_NAMESPACE=myapp ./scripts/webhook-rollout.sh
 
 This automatically:
 1. Builds and deploys the kagenti-webhook
-2. Creates the namespace with `kagenti-enabled=true` label
+2. Creates the namespace
 3. Applies all required ConfigMaps (environments, authbridge-config, envoy-config, spiffe-helper-config)
 
 **Note for custom deployments:** If deploying to a different namespace or using a different service account, update the `EXPECTED_AUDIENCE` value in `configmaps-webhook.yaml` to match your agent's SPIFFE ID:

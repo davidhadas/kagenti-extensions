@@ -18,6 +18,7 @@ package injector
 
 import (
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/utils/ptr"
 )
 
 // BuildRequiredVolumes creates all volumes required for sidecar containers (with SPIRE)
@@ -68,6 +69,17 @@ func BuildRequiredVolumes() []corev1.Volume {
 				},
 			},
 		},
+		{
+			Name: "authproxy-routes",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "authproxy-routes",
+					},
+					Optional: ptr.To(true),
+				},
+			},
+		},
 	}
 }
 
@@ -88,6 +100,17 @@ func BuildRequiredVolumesNoSpire() []corev1.Volume {
 					LocalObjectReference: corev1.LocalObjectReference{
 						Name: "envoy-config",
 					},
+				},
+			},
+		},
+		{
+			Name: "authproxy-routes",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "authproxy-routes",
+					},
+					Optional: ptr.To(true),
 				},
 			},
 		},

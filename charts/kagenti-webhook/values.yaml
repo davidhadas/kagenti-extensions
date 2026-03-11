@@ -92,3 +92,77 @@ certManager:
 
 rbac:
   create: true
+
+# Feature gates — highest-priority layer in the injection precedence chain.
+# Set globalEnabled to false to disable ALL sidecar injection (kill switch).
+# Set individual gates to false to disable specific sidecars cluster-wide.
+featureGates:
+  globalEnabled: true
+  envoyProxy: true
+  spiffeHelper: true
+  clientRegistration: true
+  # injectTools controls whether tool workloads (kagenti.io/type=tool) receive
+  # sidecar injection. Defaults to false — tools are not injected by default.
+  injectTools: false
+
+# custom values for kagenti-webhook injection configuration
+# This is your "source of truth" for platform defaults.
+# These values are version-controlled with your chart.
+
+defaults:
+  # Container images with version tags
+  images:
+    envoyProxy: ghcr.io/kagenti/kagenti-extensions/envoy-with-processor:latest
+    proxyInit: ghcr.io/kagenti/kagenti-extensions/proxy-init:latest
+    spiffeHelper: ghcr.io/spiffe/spiffe-helper:0.11.0
+    clientRegistration: ghcr.io/kagenti/kagenti-extensions/client-registration:latest
+    pullPolicy: IfNotPresent
+
+  # Proxy settings
+  proxy:
+    port: 15123
+    uid: 1337
+    adminPort: 9901
+    inboundProxyPort: 15124
+
+  # Resource defaults (conservative for dev)
+  # Note: requests must be <= limits
+  resources:
+    envoyProxy:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+    proxyInit:
+      requests:
+        cpu: 10m
+        memory: 10Mi
+      limits:
+        cpu: 10m
+        memory: 10Mi
+    spiffeHelper:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    clientRegistration:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+  # Per-sidecar enable/disable at the platform level (lowest-priority layer).
+  # These are overridden by feature gates, namespace labels, and workload labels.
+  sidecars:
+    envoyProxy:
+      enabled: true
+    spiffeHelper:
+      enabled: true
+    clientRegistration:
+      enabled: true

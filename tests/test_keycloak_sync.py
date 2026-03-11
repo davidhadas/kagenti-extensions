@@ -1,21 +1,24 @@
 """Tests for AuthBridge/keycloak_sync.py."""
 
-import sys
+import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Add the AuthBridge directory to the path so we can import keycloak_sync
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "AuthBridge"))
-
-from keycloak_sync import (
-    KeycloakReconciler,
-    ReconcileResult,
-    RouteTarget,
-    load_routes,
-    print_summary,
+# Load keycloak_sync via importlib to avoid mutating sys.path
+_spec = importlib.util.spec_from_file_location(
+    "keycloak_sync",
+    Path(__file__).resolve().parents[1] / "AuthBridge" / "keycloak_sync.py",
 )
+_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_mod)
+
+KeycloakReconciler = _mod.KeycloakReconciler
+ReconcileResult = _mod.ReconcileResult
+RouteTarget = _mod.RouteTarget
+load_routes = _mod.load_routes
+print_summary = _mod.print_summary
 
 
 # ---------------------------------------------------------------------------

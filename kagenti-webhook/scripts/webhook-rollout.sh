@@ -118,33 +118,36 @@ fi
 echo ""
 
 # Step 1: Build and load image
-echo "[1/4] Building Docker image..."
-docker build -f Dockerfile . --tag "${IMAGE_NAME}" --load
+echo "[1/7] Building image..."
+"${DETECTED}" build -f Dockerfile . --tag "${IMAGE_NAME}" --load
 
 echo ""
-echo "[2/4] Loading image into kind cluster..."
+echo "[2/7] Loading image into kind cluster..."
 if ! kind load docker-image --name "${CLUSTER}" "${IMAGE_NAME}" 2>/dev/null; then
-    echo "kind load failed, using docker save workaround..."
-    docker save "${IMAGE_NAME}" | docker exec -i "${CLUSTER}-control-plane" ctr --namespace k8s.io images import -
+    echo "kind load failed, using save workaround..."
+    "${DETECTED}" save "${IMAGE_NAME}" | "${DETECTED}" exec -i "${CLUSTER}-control-plane" ctr --namespace k8s.io images import -
 fi
 
-# Step 2: Update deployment
-echo ""
-echo "[3/4] Updating deployment..."
-kubectl -n "${NAMESPACE}" set image deployment/kagenti-webhook-controller-manager "manager=${IMAGE_NAME}"
+# Steps 3-4: Deploy ConfigMaps
+CHART_DIR="${SCRIPT_DIR}/../../charts/kagenti-webhook"
 
 echo ""
-echo "Waiting for rollout to complete..."
-kubectl rollout status -n "${NAMESPACE}" deployment/kagenti-webhook-controller-manager --timeout=120s
+echo "[3/7] Deploying platform defaults ConfigMap..."
+helm template kagenti-webhook "${CHART_DIR}" \
+  --set namespaceOverride="${NAMESPACE}" \
+  --show-only templates/configmap-platform-defaults.yaml | kubectl apply -f -
 
-# Step 3: Deploy authbridge webhook if it doesn't exist
 echo ""
-echo "[4/4] Ensuring authbridge webhook configuration exists..."
-if kubectl get mutatingwebhookconfigurations kagenti-webhook-authbridge-mutating-webhook-configuration &>/dev/null; then
-    echo "Authbridge webhook already exists, skipping..."
-else
-    echo "Creating authbridge webhook configuration..."
-    kubectl apply -f - <<EOF
+echo "[4/7] Deploying feature gates ConfigMap..."
+helm template kagenti-webhook "${CHART_DIR}" \
+  --set namespaceOverride="${NAMESPACE}" \
+  --show-only templates/configmap-feature-gates.yaml | kubectl apply -f -
+
+# Step 5: Apply webhook configuration BEFORE image rollout to avoid a race
+# where the old config sends non-Pod resources to the new Pod-only handler.
+echo ""
+echo "[5/7] Applying authbridge webhook configuration..."
+kubectl apply -f - <<EOF
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
@@ -162,11 +165,12 @@ webhooks:
       path: /mutate-workloads-authbridge
       port: 443
   failurePolicy: Fail
+  reinvocationPolicy: IfNeeded
   timeoutSeconds: 10
   sideEffects: None
   namespaceSelector:
     matchExpressions:
-      # Exclude kube-system and other critical namespaces
+      # Exclude kube-system and other critical namespaces.
       - key: kubernetes.io/metadata.name
         operator: NotIn
         values:
@@ -176,34 +180,70 @@ webhooks:
           - ${NAMESPACE}
     matchLabels:
       # Only trigger webhook for namespaces that have opted-in
-      # This aligns with NeedsMutation() which requires kagenti-enabled: true
       kagenti-enabled: "true"
+  objectSelector:
+    matchExpressions:
+      - key: kagenti.io/type
+        operator: In
+        values:
+          - agent
+          - tool
+      - key: kagenti.io/inject
+        operator: NotIn
+        values:
+          - disabled
   rules:
   - operations:
     - CREATE
-    - UPDATE
     apiGroups:
-    - apps
+    - ""
     apiVersions:
     - v1
     resources:
-    - deployments
-    - statefulsets
-    - daemonsets
-  - operations:
-    - CREATE
-    - UPDATE
-    apiGroups:
-    - batch
-    apiVersions:
-    - v1
-    resources:
-    - jobs
-    - cronjobs
+    - pods
 EOF
-    echo "Waiting for cert-manager to inject CA bundle..."
-    sleep 5
-fi
+
+# Step 6: Update deployment (image + config volumes)
+echo ""
+echo "[6/7] Updating deployment (image + config volumes)..."
+# Update the container image
+kubectl -n "${NAMESPACE}" set image deployment/kagenti-webhook-controller-manager "manager=${IMAGE_NAME}"
+
+# Idempotently ensure a volume and corresponding volumeMount exist on the deployment.
+# JSON-patch op:add to /volumes/- and /volumeMounts/- appends duplicates on re-run,
+# so we pre-check by name before patching.
+ensure_volume_and_mount() {
+    local volume_name="$1"
+    local configmap_name="$2"
+    local mount_path="$3"
+
+    local existing_volumes
+    existing_volumes="$(kubectl -n "${NAMESPACE}" get deployment kagenti-webhook-controller-manager \
+        -o jsonpath='{.spec.template.spec.volumes[*].name}' 2>/dev/null || true)"
+
+    local existing_mounts
+    existing_mounts="$(kubectl -n "${NAMESPACE}" get deployment kagenti-webhook-controller-manager \
+        -o jsonpath='{.spec.template.spec.containers[0].volumeMounts[*].name}' 2>/dev/null || true)"
+
+    if echo "${existing_volumes}" | tr ' ' '\n' | grep -qx "${volume_name}" || \
+       echo "${existing_mounts}" | tr ' ' '\n' | grep -qx "${volume_name}"; then
+        echo "  ${volume_name} volume/volumeMount already present, skipping patch"
+        return 0
+    fi
+
+    kubectl -n "${NAMESPACE}" patch deployment kagenti-webhook-controller-manager --type=json -p="[
+      {\"op\": \"add\", \"path\": \"/spec/template/spec/volumes/-\", \"value\": {\"name\": \"${volume_name}\", \"configMap\": {\"name\": \"${configmap_name}\"}}},
+      {\"op\": \"add\", \"path\": \"/spec/template/spec/containers/0/volumeMounts/-\", \"value\": {\"name\": \"${volume_name}\", \"mountPath\": \"${mount_path}\", \"readOnly\": true}}
+    ]"
+    echo "  ${volume_name} volume/volumeMount added"
+}
+
+ensure_volume_and_mount "platform-config" "kagenti-webhook-defaults"       "/etc/kagenti"
+ensure_volume_and_mount "feature-gates"   "kagenti-webhook-feature-gates"  "/etc/kagenti/feature-gates"
+
+echo ""
+echo "[7/7] Waiting for rollout to complete..."
+kubectl rollout status -n "${NAMESPACE}" deployment/kagenti-webhook-controller-manager --timeout=120s
 
 echo ""
 echo "=========================================="
@@ -223,12 +263,12 @@ if [ "${AUTHBRIDGE_DEMO}" = "true" ]; then
     echo "Setting up AuthBridge Demo Prerequisites"
     echo "=========================================="
 
-    # Ensure namespace exists with required label
+    # Ensure namespace exists
     echo ""
     echo "[AuthBridge 1/2] Creating namespace ${AUTHBRIDGE_NAMESPACE}..."
     kubectl create namespace "${AUTHBRIDGE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
-    kubectl label namespace "${AUTHBRIDGE_NAMESPACE}" kagenti-enabled=true --overwrite
     kubectl label namespace "${AUTHBRIDGE_NAMESPACE}" istio.io/dataplane-mode=ambient --overwrite
+    kubectl label namespace "${AUTHBRIDGE_NAMESPACE}" kagenti-enabled=true --overwrite
 
     # Apply ConfigMaps (update namespace in-place)
     # Note: AUTHBRIDGE_NAMESPACE is validated above to be a safe DNS-1123 label,
