@@ -37,10 +37,6 @@ data:
   # Format: spiffe://localtest.me/ns/<namespace>/sa/<service-account>
   # Update if deploying to a different namespace or using a different service account.
   EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/team1/sa/git-issue-agent"
-  # TARGET_AUDIENCE and TARGET_SCOPES are used as fallback values when a route
-  # in authproxy-routes matches but doesn't specify its own audience/scopes.
-  TARGET_AUDIENCE: "github-tool"
-  TARGET_SCOPES: "openid github-tool-aud github-full-access"
 
 ---
 # authproxy-routes ConfigMap - Per-target token exchange routes

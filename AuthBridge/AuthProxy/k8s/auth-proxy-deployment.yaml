@@ -104,18 +104,6 @@ spec:
               name: auth-proxy-config
               key: CLIENT_SECRET
               optional: true
-        - name: TARGET_AUDIENCE
-          valueFrom:
-            secretKeyRef:
-              name: auth-proxy-config
-              key: TARGET_AUDIENCE
-              optional: true
-        - name: TARGET_SCOPES
-          valueFrom:
-            secretKeyRef:
-              name: auth-proxy-config
-              key: TARGET_SCOPES
-              optional: true
         volumeMounts:
         - name: envoy-config
           mountPath: /etc/envoy

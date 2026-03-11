@@ -100,9 +100,7 @@ kubectl create secret generic auth-proxy-config \
   --from-literal=ISSUER="http://keycloak.localtest.me:8080/realms/demo" \
   --from-literal=EXPECTED_AUDIENCE="authproxy" \
   --from-literal=CLIENT_ID="authproxy" \
-  --from-literal=CLIENT_SECRET="$AUTHPROXY_SECRET" \
-  --from-literal=TARGET_AUDIENCE="demoapp" \
-  --from-literal=TARGET_SCOPES="openid demoapp-aud"
+  --from-literal=CLIENT_SECRET="$AUTHPROXY_SECRET"
 ```
 
 Then restart the auth-proxy deployment to pick up the secret:

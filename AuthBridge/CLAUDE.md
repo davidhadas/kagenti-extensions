@@ -86,8 +86,8 @@ The core ext-proc that handles both traffic directions:
 - Reads `CLIENT_ID` from `/shared/client-id.txt` (file) or `CLIENT_ID` env var (fallback)
 - Reads `CLIENT_SECRET` from `/shared/client-secret.txt` (file) or `CLIENT_SECRET` env var (fallback)
 - Static config from env vars: `TOKEN_URL`, `ISSUER`, `EXPECTED_AUDIENCE`
-- Outbound route config from `ROUTES_CONFIG_PATH` (default `/etc/authproxy-routes/routes.yaml`)
-- Default outbound policy from `DEFAULT_OUTBOUND_POLICY` env var: `"passthrough"` (default) or `"exchange"` (legacy)
+- Outbound route config from `ROUTES_CONFIG_PATH` (default `/etc/authproxy-routes/routes.yaml`). Target audience and scopes are configured per-route only.
+- Default outbound policy from `DEFAULT_OUTBOUND_POLICY` env var: `"passthrough"` (default) or `"exchange"`
 - JWKS URL is derived from TOKEN_URL: replaces `/token` suffix with `/certs`
 
 **Key types:**
@@ -177,7 +177,7 @@ When the kagenti-webhook injects sidecars, these ConfigMaps must exist in the ta
 |----------|------|----------|------------|
 | `environments` | ConfigMap | client-registration | `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `SPIRE_ENABLED` |
 | `keycloak-admin-secret` | Secret | client-registration | `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` |
-| `authbridge-config` | ConfigMap | envoy-proxy (ext-proc) | `TOKEN_URL`, `ISSUER`, `DEFAULT_OUTBOUND_POLICY` (optional) |
+| `authbridge-config` | ConfigMap | envoy-proxy (ext-proc) | `TOKEN_URL`, `ISSUER`, `DEFAULT_OUTBOUND_POLICY` (optional). Target audience and scopes are configured per-route in `authproxy-routes`. |
 | `authproxy-routes` | ConfigMap (optional) | envoy-proxy (ext-proc) | `routes.yaml` with per-host token exchange rules |
 | `spiffe-helper-config` | ConfigMap | spiffe-helper | `helper.conf` (SPIRE agent address, cert paths, JWT SVID config) |
 | `envoy-config` | ConfigMap | envoy-proxy | `envoy.yaml` (full Envoy configuration) |
@@ -193,7 +193,7 @@ routes:
     token_scopes: "openid auth-target-aud"
 ```
 
-The go-processor defaults to **passthrough** for outbound requests that don't match any route. Token exchange only happens for hosts with explicit entries in `authproxy-routes`. Set `DEFAULT_OUTBOUND_POLICY: "exchange"` in `authbridge-config` to restore legacy behavior.
+The go-processor defaults to **passthrough** for outbound requests that don't match any route. Token exchange only happens for hosts with explicit entries in `authproxy-routes`, where target audience and scopes are configured per-route.
 
 ## Shared Volume Contract
 

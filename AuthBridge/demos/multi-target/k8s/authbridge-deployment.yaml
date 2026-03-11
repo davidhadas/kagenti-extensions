@@ -45,7 +45,6 @@ metadata:
 # =============================================================================
 # AUTH PROXY CONFIGURATION
 # CLIENT_ID and CLIENT_SECRET come from /shared/ files (populated by client-registration)
-# TARGET_AUDIENCE and TARGET_SCOPES define the target service for token exchange
 # =============================================================================
 apiVersion: v1
 kind: Secret
@@ -55,8 +54,6 @@ metadata:
 type: Opaque
 stringData:
   TOKEN_URL: "http://keycloak-service.keycloak.svc.cluster.local:8080/realms/demo/protocol/openid-connect/token"
-  TARGET_AUDIENCE: "auth-target"
-  TARGET_SCOPES: "openid auth-target-aud"
 
 ---
 # =============================================================================
@@ -449,16 +446,6 @@ spec:
                 secretKeyRef:
                   name: auth-proxy-config
                   key: TOKEN_URL
-            - name: TARGET_AUDIENCE
-              valueFrom:
-                secretKeyRef:
-                  name: auth-proxy-config
-                  key: TARGET_AUDIENCE
-            - name: TARGET_SCOPES
-              valueFrom:
-                secretKeyRef:
-                  name: auth-proxy-config
-                  key: TARGET_SCOPES
             # Dynamic credentials from client-registration (via files)
             - name: CLIENT_ID_FILE
               value: "/shared/client-id.txt"

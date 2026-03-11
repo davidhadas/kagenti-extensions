@@ -364,30 +364,6 @@ func (b *ContainerBuilder) BuildEnvoyProxyContainerWithSpireOption(spireEnabled 
 				},
 			},
 			{
-				Name: "TARGET_AUDIENCE",
-				ValueFrom: &corev1.EnvVarSource{
-					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "authbridge-config",
-						},
-						Key:      "TARGET_AUDIENCE",
-						Optional: ptr.To(true),
-					},
-				},
-			},
-			{
-				Name: "TARGET_SCOPES",
-				ValueFrom: &corev1.EnvVarSource{
-					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "authbridge-config",
-						},
-						Key:      "TARGET_SCOPES",
-						Optional: ptr.To(true),
-					},
-				},
-			},
-			{
 				Name:  "CLIENT_ID_FILE",
 				Value: "/shared/client-id.txt",
 			},

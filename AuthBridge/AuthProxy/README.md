@@ -129,10 +129,10 @@ The Ext Proc reads token exchange configuration directly from environment variab
 | `EXPECTED_AUDIENCE` | Expected audience claim for inbound JWT validation. Optional - if not set, audience validation is skipped. | Environment variable |
 | `CLIENT_ID` | Client ID for token exchange | `/shared/client-id.txt` file or `CLIENT_ID` env var |
 | `CLIENT_SECRET` | Client secret | `/shared/client-secret.txt` file or `CLIENT_SECRET` env var |
-| `TARGET_AUDIENCE` | Target service audience for outbound token exchange | Environment variable |
-| `TARGET_SCOPES` | Scopes for exchanged token | Environment variable |
 
 > **Note:** `CLIENT_ID` and `CLIENT_SECRET` are preferentially loaded from `/shared/` files (when using dynamic client registration with SPIFFE). If files are not available, environment variables are used as fallback.
+
+> **Note:** Target audience and scopes for outbound token exchange are configured per-route in the `authproxy-routes` ConfigMap, not as global environment variables. See the [AuthBridge CLAUDE.md](../../AuthBridge/CLAUDE.md) for the `authproxy-routes` format.
 
 #### Configuration Secret
 
@@ -149,8 +149,6 @@ stringData:
   EXPECTED_AUDIENCE: "authproxy"  # Optional: expected audience for inbound requests
   CLIENT_ID: "authproxy"
   CLIENT_SECRET: "<your-client-secret>"
-  TARGET_AUDIENCE: "target-service"
-  TARGET_SCOPES: "openid target-service-aud"
 ```
 
 ## Token Exchange Flow

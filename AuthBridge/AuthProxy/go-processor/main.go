@@ -29,12 +29,10 @@ import (
 
 // Configuration for token exchange
 type Config struct {
-	ClientID       string
-	ClientSecret   string
-	TokenURL       string
-	TargetAudience string
-	TargetScopes   string
-	mu             sync.RWMutex
+	ClientID     string
+	ClientSecret string
+	TokenURL     string
+	mu           sync.RWMutex
 }
 
 var globalConfig = &Config{}
@@ -107,8 +105,6 @@ func loadConfig() {
 
 	// Static configuration from environment variables
 	globalConfig.TokenURL = os.Getenv("TOKEN_URL")
-	globalConfig.TargetAudience = os.Getenv("TARGET_AUDIENCE")
-	globalConfig.TargetScopes = os.Getenv("TARGET_SCOPES")
 
 	// For CLIENT_ID and CLIENT_SECRET, prefer files from /shared/ (dynamic credentials)
 	// This allows AuthProxy to use the same credentials as the auto-registered client
@@ -144,8 +140,6 @@ func loadConfig() {
 	log.Printf("[Config]   CLIENT_ID: %s", globalConfig.ClientID)
 	log.Printf("[Config]   CLIENT_SECRET: [REDACTED, length=%d]", len(globalConfig.ClientSecret))
 	log.Printf("[Config]   TOKEN_URL: %s", globalConfig.TokenURL)
-	log.Printf("[Config]   TARGET_AUDIENCE: %s", globalConfig.TargetAudience)
-	log.Printf("[Config]   TARGET_SCOPES: %s", globalConfig.TargetScopes)
 }
 
 // waitForCredentials waits for credential files to be available
@@ -182,10 +176,10 @@ func waitForCredentials(maxWait time.Duration) bool {
 }
 
 // getConfig returns the current configuration
-func getConfig() (clientID, clientSecret, tokenURL, targetAudience, targetScopes string) {
+func getConfig() (clientID, clientSecret, tokenURL string) {
 	globalConfig.mu.RLock()
 	defer globalConfig.mu.RUnlock()
-	return globalConfig.ClientID, globalConfig.ClientSecret, globalConfig.TokenURL, globalConfig.TargetAudience, globalConfig.TargetScopes
+	return globalConfig.ClientID, globalConfig.ClientSecret, globalConfig.TokenURL
 }
 
 var (
@@ -517,19 +511,15 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 	}
 
 	// Get global configuration (from files or env vars)
-	clientID, clientSecret, tokenURL, targetAudience, targetScopes := getConfig()
+	clientID, clientSecret, tokenURL := getConfig()
 
-	// Apply target-specific overrides if available
+	// Get target audience and scopes from the route configuration.
+	// These are required per-route fields; there is no global fallback.
+	var targetAudience, targetScopes string
 	if targetConfig != nil {
 		log.Printf("[Resolver] Applying target config for host %q", requestHost)
-		if targetConfig.Audience != "" {
-			targetAudience = targetConfig.Audience
-			log.Printf("[Resolver] Using target audience: %s", targetAudience)
-		}
-		if targetConfig.Scopes != "" {
-			targetScopes = targetConfig.Scopes
-			log.Printf("[Resolver] Using target scopes: %s", targetScopes)
-		}
+		targetAudience = targetConfig.Audience
+		targetScopes = targetConfig.Scopes
 		if targetConfig.TokenEndpoint != "" {
 			tokenURL = targetConfig.TokenEndpoint
 			log.Printf("[Resolver] Using target token_url: %s", tokenURL)
@@ -610,7 +600,7 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 		log.Println("[Token Exchange] Missing configuration, skipping token exchange")
 		log.Printf("[Token Exchange] CLIENT_ID present: %v, CLIENT_SECRET present: %v, TOKEN_URL present: %v",
 			clientID != "", clientSecret != "", tokenURL != "")
-		log.Printf("[Token Exchange] TARGET_AUDIENCE present: %v, TARGET_SCOPES present: %v",
+		log.Printf("[Token Exchange] Route target_audience present: %v, Route token_scopes present: %v",
 			targetAudience != "", targetScopes != "")
 	}
 
@@ -679,7 +669,7 @@ func main() {
 	loadConfig()
 
 	// Initialize inbound JWT validation
-	_, _, tokenURL, _, _ := getConfig()
+	_, _, tokenURL := getConfig()
 	inboundIssuer = os.Getenv("ISSUER")
 	expectedAudience = os.Getenv("EXPECTED_AUDIENCE")
 	if tokenURL != "" && inboundIssuer != "" {

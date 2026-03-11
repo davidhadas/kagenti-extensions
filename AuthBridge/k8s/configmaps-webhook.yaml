@@ -35,8 +35,6 @@ data:
   # ISSUER: Required. Keycloak frontend URL used as token issuer for inbound JWT validation.
   # Must match the "iss" claim in tokens (Keycloak's frontend URL).
   ISSUER: "http://keycloak.localtest.me:8080/realms/demo"
-  TARGET_AUDIENCE: "auth-target"
-  TARGET_SCOPES: "openid auth-target-aud"
 
 ---
 # spiffe-helper-config ConfigMap - Used by spiffe-helper container (SPIRE mode only)

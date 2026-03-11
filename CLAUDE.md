@@ -204,7 +204,7 @@ When the webhook injects sidecars, the target namespace needs these resources:
 |----------|------|---------|------|
 | `environments` | ConfigMap | client-registration | `KEYCLOAK_URL`, `KEYCLOAK_REALM` |
 | `keycloak-admin-secret` | Secret | client-registration | `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` |
-| `authbridge-config` | ConfigMap | envoy-proxy (ext-proc) | `TOKEN_URL`, `ISSUER`, `DEFAULT_OUTBOUND_POLICY` (optional, defaults to `passthrough`) |
+| `authbridge-config` | ConfigMap | envoy-proxy (ext-proc) | `TOKEN_URL`, `ISSUER`, `DEFAULT_OUTBOUND_POLICY` (optional, defaults to `passthrough`). Target audience and scopes are configured per-route in `authproxy-routes`. |
 | `authproxy-routes` | ConfigMap (optional) | envoy-proxy (ext-proc) | `routes.yaml` -- per-host token exchange rules (see AuthBridge/CLAUDE.md for format) |
 | `spiffe-helper-config` | ConfigMap | spiffe-helper | SPIFFE helper configuration file |
 | `envoy-config` | ConfigMap | envoy-proxy | Envoy YAML configuration |
@@ -302,7 +302,7 @@ AUTHBRIDGE_DEMO=true ./scripts/webhook-rollout.sh
 
 6. **Envoy config not embedded:** The envoy-proxy sidecar mounts `envoy-config` ConfigMap at `/etc/envoy`. This ConfigMap must exist in the target namespace before workloads are created.
 
-7. **Outbound policy is passthrough by default:** The go-processor defaults to passing outbound traffic through unchanged. Token exchange only happens for hosts explicitly listed in the `authproxy-routes` ConfigMap. Setting `TARGET_AUDIENCE`/`TARGET_SCOPES` in `authbridge-config` alone does nothing unless a route references them (or the default policy is changed to `exchange`).
+7. **Outbound policy is passthrough by default:** The go-processor defaults to passing outbound traffic through unchanged. Token exchange only happens for hosts explicitly listed in the `authproxy-routes` ConfigMap. Target audience and scopes are configured per-route in `authproxy-routes`.
 
 8. **Route host patterns use short service names:** The `host` field in `authproxy-routes` matches against the HTTP `Host` header, which is typically just the short Kubernetes service name (e.g., `github-tool-mcp`), not the FQDN. Glob patterns (`*`) are supported but the most common case is a plain service name.
 

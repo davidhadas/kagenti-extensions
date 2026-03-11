@@ -200,14 +200,15 @@ kubectl create secret generic keycloak-admin-secret -n team1 \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-Then apply the demo-specific `authbridge-config` override — the token exchange
-target audience (`github-tool`), scopes, and the agent's SPIFFE ID for inbound
-audience validation:
+Then apply the demo-specific ConfigMaps — the `authproxy-routes` ConfigMap
+configures per-route token exchange (target audience and scopes for the
+`github-tool` host), and `authbridge-config` sets the agent's SPIFFE ID for
+inbound audience validation:
 
 ```bash
 cd AuthBridge
 
-# Override authbridge-config for this demo (sets TARGET_AUDIENCE=github-tool)
+# Apply demo ConfigMaps (authbridge-config and authproxy-routes)
 kubectl apply -f demos/github-issue/k8s/configmaps.yaml
 ```
 
@@ -661,15 +662,15 @@ kubectl delete pod test-client -n team1 --ignore-not-found
 <!-- WORKAROUND: Remove this note once kagenti-extensions#139 is implemented.
      The full scope-forwarding feature in go-processor is required for this step to work
      end-to-end. Until that lands, the exchanged token always includes github-full-access
-     (from the static TARGET_SCOPES in authbridge-config).
+     (from the static token_scopes in the authproxy-routes ConfigMap).
      Track: https://github.com/kagenti/kagenti-extensions/issues/139 -->
 
 > **Known limitation:** This step requires the go-processor scope forwarding feature
 > ([kagenti-extensions#139](https://github.com/kagenti/kagenti-extensions/issues/139)).
-> Currently, `TARGET_SCOPES` in `authbridge-config` is static, so all exchanged tokens
-> include `github-full-access` regardless of the original user's scopes. Once scope
-> forwarding is implemented, Alice's exchanged token will omit `github-full-access`
-> while Bob's will include it.
+> Currently, `token_scopes` in the `authproxy-routes` ConfigMap is static per-route, so
+> all exchanged tokens include `github-full-access` regardless of the original user's
+> scopes. Once scope forwarding is implemented, Alice's exchanged token will omit
+> `github-full-access` while Bob's will include it.
 
 This step demonstrates **scope-based access control**: two users with different
 privilege levels get different GitHub API access through the same agent.

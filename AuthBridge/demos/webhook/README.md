@@ -96,8 +96,7 @@ The ConfigMaps include:
   - `TOKEN_URL` - Keycloak token endpoint for token exchange
   - `ISSUER` - Expected JWT issuer for inbound validation (required)
   - `EXPECTED_AUDIENCE` - Expected audience for inbound validation (optional, if not set audience validation is skipped)
-  - `TARGET_AUDIENCE` - Target audience for outbound token exchange
-  - `TARGET_SCOPES` - Scopes for exchanged tokens
+  - Target audience and scopes for outbound token exchange are configured per-route in the `authproxy-routes` ConfigMap
 - `spiffe-helper-config` - SPIFFE helper configuration (for SPIRE mode)
 - `envoy-config` - Envoy proxy configuration
 
@@ -322,7 +321,7 @@ kubectl logs deployment/agent -n team1 -c spiffe-helper
 ### Common Issues
 
 1. **"Requested audience not available: auth-target"**
-   - Ensure `TARGET_SCOPES` in `authbridge-config` includes `auth-target-aud`
+   - Ensure the route entry in `authproxy-routes` includes `auth-target-aud` in `token_scopes`
    - Run `setup_keycloak.py` again to create the required scopes
 
 2. **ConfigMap not found errors**

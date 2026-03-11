@@ -269,26 +269,22 @@ func hasReplacedAuthHeader(resp *v3.ProcessingResponse) (string, bool) {
 }
 
 type savedGlobals struct {
-	policy         string
-	resolver       resolver.TargetResolver
-	clientID       string
-	clientSecret   string
-	tokenURL       string
-	targetAudience string
-	targetScopes   string
+	policy       string
+	resolver     resolver.TargetResolver
+	clientID     string
+	clientSecret string
+	tokenURL     string
 }
 
 func saveGlobals() savedGlobals {
 	globalConfig.mu.RLock()
 	defer globalConfig.mu.RUnlock()
 	return savedGlobals{
-		policy:         defaultOutboundPolicy,
-		resolver:       globalResolver,
-		clientID:       globalConfig.ClientID,
-		clientSecret:   globalConfig.ClientSecret,
-		tokenURL:       globalConfig.TokenURL,
-		targetAudience: globalConfig.TargetAudience,
-		targetScopes:   globalConfig.TargetScopes,
+		policy:       defaultOutboundPolicy,
+		resolver:     globalResolver,
+		clientID:     globalConfig.ClientID,
+		clientSecret: globalConfig.ClientSecret,
+		tokenURL:     globalConfig.TokenURL,
 	}
 }
 
@@ -300,18 +296,14 @@ func restoreGlobals(saved savedGlobals) {
 	globalConfig.ClientID = saved.clientID
 	globalConfig.ClientSecret = saved.clientSecret
 	globalConfig.TokenURL = saved.tokenURL
-	globalConfig.TargetAudience = saved.targetAudience
-	globalConfig.TargetScopes = saved.targetScopes
 }
 
-func setGlobalConfig(clientID, clientSecret, tokenURL, audience, scopes string) {
+func setGlobalConfig(clientID, clientSecret, tokenURL string) {
 	globalConfig.mu.Lock()
 	defer globalConfig.mu.Unlock()
 	globalConfig.ClientID = clientID
 	globalConfig.ClientSecret = clientSecret
 	globalConfig.TokenURL = tokenURL
-	globalConfig.TargetAudience = audience
-	globalConfig.TargetScopes = scopes
 }
 
 // --- Test: Default agents (weather-service pattern) ---
@@ -373,9 +365,9 @@ func TestDefaultOutboundPolicy(t *testing.T) {
 			globalResolver = emptyResolver(t)
 
 			if tt.globalConfig {
-				setGlobalConfig("test-client", "test-secret", "http://keycloak/token", "test-aud", "openid")
+				setGlobalConfig("test-client", "test-secret", "http://keycloak/token")
 			} else {
-				setGlobalConfig("", "", "", "", "")
+				setGlobalConfig("", "", "")
 			}
 
 			p := &processor{}
@@ -392,10 +384,29 @@ func TestDefaultOutboundPolicy(t *testing.T) {
 	}
 }
 
-// TestDefaultOutboundPolicyLegacyExchange verifies backward compatibility:
-// when DEFAULT_OUTBOUND_POLICY=exchange and global config is complete, unmatched
-// hosts still get token exchange (the old behavior).
-func TestDefaultOutboundPolicyLegacyExchange(t *testing.T) {
+// TestDefaultOutboundPolicyLegacyExchangeNoRoutes verifies that when
+// DEFAULT_OUTBOUND_POLICY=exchange but no routes are configured, the request
+// passes through because there is no target audience/scopes to use.
+func TestDefaultOutboundPolicyLegacyExchangeNoRoutes(t *testing.T) {
+	saved := saveGlobals()
+	defer restoreGlobals(saved)
+
+	defaultOutboundPolicy = "exchange"
+	globalResolver = emptyResolver(t)
+	setGlobalConfig("test-client", "test-secret", "http://keycloak/token")
+
+	p := &processor{}
+	headers := buildHeaders("random-service.example.com", "Bearer some-jwt-token")
+	resp := p.handleOutbound(context.Background(), headers)
+
+	if !isPassthrough(resp) {
+		t.Error("expected passthrough when exchange policy is set but no routes provide audience/scopes")
+	}
+}
+
+// TestDefaultOutboundPolicyLegacyExchangeWithRoute verifies that when
+// DEFAULT_OUTBOUND_POLICY=exchange and a route matches, token exchange works.
+func TestDefaultOutboundPolicyLegacyExchangeWithRoute(t *testing.T) {
 	saved := saveGlobals()
 	defer restoreGlobals(saved)
 
@@ -406,9 +417,16 @@ func TestDefaultOutboundPolicyLegacyExchange(t *testing.T) {
 	})
 	defer keycloak.Close()
 
+	routesYAML := fmt.Sprintf(`
+- host: "random-service.example.com"
+  target_audience: "test-audience"
+  token_scopes: "openid test-aud"
+  token_url: %q
+`, keycloak.URL)
+
 	defaultOutboundPolicy = "exchange"
-	globalResolver = emptyResolver(t)
-	setGlobalConfig("test-client", "test-secret", keycloak.URL, "test-audience", "openid test-aud")
+	globalResolver = setupTestResolver(t, routesYAML)
+	setGlobalConfig("test-client", "test-secret", keycloak.URL)
 
 	p := &processor{}
 	headers := buildHeaders("random-service.example.com", "Bearer some-jwt-token")
@@ -417,9 +435,9 @@ func TestDefaultOutboundPolicyLegacyExchange(t *testing.T) {
 	token, ok := hasReplacedAuthHeader(resp)
 	if !ok {
 		if isDenied(resp) {
-			t.Fatal("legacy exchange policy: expected token exchange to succeed, but got 503 denial")
+			t.Fatal("expected token exchange to succeed, but got 503 denial")
 		}
-		t.Fatal("legacy exchange policy: expected Authorization header to be replaced, but got passthrough")
+		t.Fatal("expected Authorization header to be replaced, but got passthrough")
 	}
 	if token != "Bearer legacy-exchanged-token" {
 		t.Errorf("expected 'Bearer legacy-exchanged-token', got %q", token)
@@ -453,7 +471,7 @@ func TestOutboundPolicyWithRoutes(t *testing.T) {
 
 	defaultOutboundPolicy = "passthrough"
 	globalResolver = setupTestResolver(t, routesYAML)
-	setGlobalConfig("spiffe://localtest.me/ns/team1/sa/github-issue-agent", "client-secret-123", keycloak.URL, "", "")
+	setGlobalConfig("spiffe://localtest.me/ns/team1/sa/github-issue-agent", "client-secret-123", keycloak.URL)
 
 	t.Run("route_match_exchanges_token", func(t *testing.T) {
 		p := &processor{}
@@ -531,7 +549,7 @@ func TestOutboundPolicyRouteMatchExchangeFails(t *testing.T) {
 
 	defaultOutboundPolicy = "passthrough"
 	globalResolver = setupTestResolver(t, routesYAML)
-	setGlobalConfig("test-client", "test-secret", keycloak.URL, "", "")
+	setGlobalConfig("test-client", "test-secret", keycloak.URL)
 
 	p := &processor{}
 	headers := buildHeaders("github-issue-tool-headless.team1.svc.cluster.local", "Bearer some-invalid-jwt")
