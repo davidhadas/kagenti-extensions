@@ -77,6 +77,9 @@ type PodMutator struct {
 	// Getter functions for hot-reloadable config (used by precedence evaluator)
 	GetPlatformConfig func() *config.PlatformConfig
 	GetFeatureGates   func() *config.FeatureGates
+	// nsConfigCache caches namespace ConfigMap/Secret reads across workloads.
+	// Used when featureGates.perWorkloadConfigResolution is false (default).
+	nsConfigCache *NamespaceConfigCache
 }
 
 func NewPodMutator(
@@ -90,6 +93,7 @@ func NewPodMutator(
 		EnableClientRegistration: enableClientRegistration,
 		GetPlatformConfig:        getPlatformConfig,
 		GetFeatureGates:          getFeatureGates,
+		nsConfigCache:            NewNamespaceConfigCache(),
 	}
 }
 
@@ -184,8 +188,45 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		podSpec.Volumes = []corev1.Volume{}
 	}
 
-	// Build containers using fresh config (picks up hot-reloaded images/resources)
-	builder := NewContainerBuilder(currentConfig)
+	// ========================================
+	// Config resolution pipeline
+	// ========================================
+
+	// 1. Read namespace config (ConfigMaps/Secrets in the target namespace).
+	//    When perWorkloadConfigResolution is false (default), use cached values
+	//    to avoid repeated API calls — namespace ConfigMaps rarely change.
+	var nsConfig *NamespaceConfig
+	var err error
+	if currentGates.PerWorkloadConfigResolution {
+		mutatorLog.V(1).Info("reading namespace config per-workload", "namespace", namespace)
+		nsConfig, err = ReadNamespaceConfig(ctx, m.Client, namespace)
+		if err != nil {
+			mutatorLog.Info("Warning: failed to read namespace config, using empty defaults",
+				"namespace", namespace, "error", err)
+			nsConfig = &NamespaceConfig{}
+		}
+	} else {
+		nsConfig, err = m.nsConfigCache.GetOrLoad(ctx, m.Client, namespace)
+		if err != nil {
+			mutatorLog.Info("Warning: failed to load namespace config from cache, using empty defaults",
+				"namespace", namespace, "error", err)
+			nsConfig = &NamespaceConfig{}
+		}
+	}
+
+	// 2. Read AgentRuntime overrides (nil if CR not found or CRD not installed)
+	var arOverrides *AgentRuntimeOverrides
+	arOverrides, err = ReadAgentRuntimeOverrides(ctx, m.Client, namespace, crName)
+	if err != nil {
+		mutatorLog.Info("Warning: failed to read AgentRuntime overrides, continuing without",
+			"namespace", namespace, "crName", crName, "error", err)
+	}
+
+	// 3. Merge into resolved config
+	resolved := ResolveConfig(currentConfig, nsConfig, arOverrides)
+
+	// 4. Build containers using resolved config (literal env vars)
+	builder := NewResolvedContainerBuilder(resolved)
 
 	// Conditionally inject sidecars based on precedence decisions
 	if decision.EnvoyProxy.Inject && !containerExists(podSpec.Containers, EnvoyProxyContainerName) {
@@ -205,8 +246,8 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		podSpec.Containers = append(podSpec.Containers, builder.BuildClientRegistrationContainerWithSpireOption(crName, namespace, spireEnabled))
 	}
 
-	// Inject volumes — use SPIRE volumes when spireEnabled because both
-	// spiffe-helper AND client-registration mount svid-output in that mode.
+	// Inject volumes — use resolved volumes with namespace ConfigMap references.
+	// The volume names remain the same so existing mount paths work.
 	var requiredVolumes []corev1.Volume
 	if spireEnabled {
 		requiredVolumes = BuildRequiredVolumes()
@@ -223,7 +264,8 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		"containers", len(podSpec.Containers),
 		"initContainers", len(podSpec.InitContainers),
 		"volumes", len(podSpec.Volumes),
-		"spireEnabled", spireEnabled)
+		"spireEnabled", spireEnabled,
+		"hasAgentRuntimeOverrides", arOverrides != nil)
 	return true, nil
 }
 

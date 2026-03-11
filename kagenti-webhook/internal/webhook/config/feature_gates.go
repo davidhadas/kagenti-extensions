@@ -10,6 +10,11 @@ type FeatureGates struct {
 	// InjectTools controls whether tool workloads (kagenti.io/type=tool) receive
 	// sidecar injection. Defaults to false — tools are not injected by default.
 	InjectTools bool `json:"injectTools" yaml:"injectTools"`
+	// PerWorkloadConfigResolution controls whether namespace ConfigMaps/Secrets
+	// are read on every admission request (true) or cached per namespace and
+	// reused across workloads (false). Defaults to false for performance — the
+	// cache is cleared on webhook pod restart.
+	PerWorkloadConfigResolution bool `json:"perWorkloadConfigResolution" yaml:"perWorkloadConfigResolution"`
 }
 
 // DefaultFeatureGates returns feature gates with sidecar injection enabled for
