@@ -196,24 +196,20 @@ Hooks:
 | SPIRE | Optional | SPIFFE identity (JWT-SVIDs) for workloads |
 | Prometheus | Optional | Metrics collection (ServiceMonitor) |
 
-## ConfigMaps Expected at Runtime
+## ConfigMaps and Secrets Expected at Runtime
 
-When the webhook injects sidecars, the target namespace needs these ConfigMaps:
+When the webhook injects sidecars, the target namespace needs these resources:
 
 | Resource | Kind | Used by | Keys |
 |----------|------|---------|------|
 | `environments` | ConfigMap | client-registration | `KEYCLOAK_URL`, `KEYCLOAK_REALM` |
 | `keycloak-admin-secret` | Secret | client-registration | `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` |
-| `authbridge-config` | ConfigMap | envoy-proxy (ext-proc) | `TOKEN_URL`, `ISSUER`, `TARGET_AUDIENCE`, `TARGET_SCOPES`, `DEFAULT_OUTBOUND_POLICY` |
-| `authproxy-routes` | ConfigMap (optional) | envoy-proxy (ext-proc) | `routes.yaml` — per-target token exchange routes |
+| `authbridge-config` | ConfigMap | envoy-proxy (ext-proc) | `TOKEN_URL`, `ISSUER`, `DEFAULT_OUTBOUND_POLICY` (optional, defaults to `passthrough`) |
+| `authproxy-routes` | ConfigMap (optional) | envoy-proxy (ext-proc) | `routes.yaml` -- per-host token exchange rules (see AuthBridge/CLAUDE.md for format) |
 | `spiffe-helper-config` | ConfigMap | spiffe-helper | SPIFFE helper configuration file |
 | `envoy-config` | ConfigMap | envoy-proxy | Envoy YAML configuration |
 
-### Outbound Token Exchange Policy
-
-The go-processor defaults to **passthrough** for outbound requests that don't match any route in `authproxy-routes`. This means agents work out-of-the-box with any LLM provider (Ollama, OpenAI, etc.) without needing token exchange exclusions. Only hosts with explicit route entries in `authproxy-routes` get token exchange.
-
-Set `DEFAULT_OUTBOUND_POLICY: "exchange"` in `authbridge-config` to restore the legacy behavior (exchange for all outbound traffic when global config is set).
+**Note:** `authproxy-routes` is optional. Without it, all outbound traffic passes through unchanged (the default policy is `passthrough`). Only create it when the agent needs to call services that require token exchange. Set `DEFAULT_OUTBOUND_POLICY: "exchange"` in `authbridge-config` to restore the legacy behavior.
 
 ## Common Development Tasks
 
@@ -305,6 +301,10 @@ AUTHBRIDGE_DEMO=true ./scripts/webhook-rollout.sh
 5. **CI Go version alignment:** Ensure the Go version in `ci.yaml` matches the highest Go version required across all modules (currently Go 1.24, matching `kagenti-webhook/go.mod`).
 
 6. **Envoy config not embedded:** The envoy-proxy sidecar mounts `envoy-config` ConfigMap at `/etc/envoy`. This ConfigMap must exist in the target namespace before workloads are created.
+
+7. **Outbound policy is passthrough by default:** The go-processor defaults to passing outbound traffic through unchanged. Token exchange only happens for hosts explicitly listed in the `authproxy-routes` ConfigMap. Setting `TARGET_AUDIENCE`/`TARGET_SCOPES` in `authbridge-config` alone does nothing unless a route references them (or the default policy is changed to `exchange`).
+
+8. **Route host patterns use short service names:** The `host` field in `authproxy-routes` matches against the HTTP `Host` header, which is typically just the short Kubernetes service name (e.g., `github-tool-mcp`), not the FQDN. Glob patterns (`*`) are supported but the most common case is a plain service name.
 
 ## DCO Sign-Off (Mandatory)
 
