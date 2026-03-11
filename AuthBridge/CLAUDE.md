@@ -67,20 +67,27 @@ The core ext-proc that handles both traffic directions:
 - Removes `x-authbridge-direction` header before forwarding to app
 
 **Outbound path** (no direction header):
-- Resolves the destination host against `routes.yaml` (per-host exchange config)
-- If the host matches a `passthrough: true` route, forwards unchanged
-- If no route matches and `DEFAULT_OUTBOUND_POLICY` is `"passthrough"` (the default), forwards unchanged
-- If a route matches with audience/scopes, performs OAuth 2.0 Token Exchange (RFC 8693)
-- Replaces the Authorization header with the exchanged token on success
+- Default policy is **passthrough** -- outbound requests pass through unchanged unless a route matches
+- Uses a **route resolver** to match the request's `Host` header against patterns in `authproxy-routes` ConfigMap
+- If a route matches: reads `target_audience` and `token_scopes` from the route, obtains a token via `client_credentials` grant, and injects it as `Authorization: Bearer <token>`
+- If no route matches: applies the default outbound policy (`passthrough` or `exchange`)
 - Returns 503 if exchange fails for a routed host (prevents unauthenticated calls)
+- The `DEFAULT_OUTBOUND_POLICY` env var controls the fallback behavior (default: `passthrough`)
+
+**Route resolver (outbound):**
+- Reads `/etc/authproxy-routes/routes.yaml` (path controlled by `ROUTES_CONFIG_PATH` env var)
+- Each route entry has: `host` (glob pattern), `target_audience`, `token_scopes`
+- Host matching uses `filepath.Match` semantics (supports `*`, `?`, `[...]` patterns)
+- Most commonly, `host` is a plain Kubernetes service name (e.g., `github-tool-mcp`) because the HTTP client sets the Host header from the URL hostname
+- Routes file is loaded once at startup; restart the pod to pick up changes
 
 **Configuration loading:**
 - Waits up to 60s for credential files from client-registration (`waitForCredentials`)
 - Reads `CLIENT_ID` from `/shared/client-id.txt` (file) or `CLIENT_ID` env var (fallback)
 - Reads `CLIENT_SECRET` from `/shared/client-secret.txt` (file) or `CLIENT_SECRET` env var (fallback)
-- Static config from env vars: `TOKEN_URL`, `ISSUER`, `EXPECTED_AUDIENCE`, `TARGET_AUDIENCE`, `TARGET_SCOPES`
-- `DEFAULT_OUTBOUND_POLICY` env var: `"passthrough"` (default) or `"exchange"` (legacy)
-- Routes from `ROUTES_CONFIG_PATH` (default `/etc/authproxy/routes.yaml`)
+- Static config from env vars: `TOKEN_URL`, `ISSUER`, `EXPECTED_AUDIENCE`
+- Outbound route config from `ROUTES_CONFIG_PATH` (default `/etc/authproxy-routes/routes.yaml`)
+- Default outbound policy from `DEFAULT_OUTBOUND_POLICY` env var: `"passthrough"` (default) or `"exchange"` (legacy)
 - JWKS URL is derived from TOKEN_URL: replaces `/token` suffix with `/certs`
 
 **Key types:**
@@ -166,34 +173,27 @@ There are **four** setup scripts for different demo scenarios:
 
 When the kagenti-webhook injects sidecars, these ConfigMaps must exist in the target namespace. All required ones are defined in `demos/webhook/k8s/configmaps-webhook.yaml`:
 
-| ConfigMap | Consumer | Required | Key Fields |
-|-----------|----------|----------|------------|
-| `environments` | client-registration | Yes | `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD`, `SPIRE_ENABLED` |
-| `authbridge-config` | envoy-proxy (ext-proc) | Yes | `TOKEN_URL`, `ISSUER`, `TARGET_AUDIENCE`, `TARGET_SCOPES`, `DEFAULT_OUTBOUND_POLICY` |
-| `authproxy-routes` | envoy-proxy (ext-proc) | No | `routes.yaml` — per-target token exchange routes (host, audience, scopes, passthrough) |
-| `spiffe-helper-config` | spiffe-helper | Yes (SPIRE) | `helper.conf` (SPIRE agent address, cert paths, JWT SVID config) |
-| `envoy-config` | envoy-proxy | Yes | `envoy.yaml` (full Envoy configuration) |
+| Resource | Kind | Consumer | Key Fields |
+|----------|------|----------|------------|
+| `environments` | ConfigMap | client-registration | `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `SPIRE_ENABLED` |
+| `keycloak-admin-secret` | Secret | client-registration | `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` |
+| `authbridge-config` | ConfigMap | envoy-proxy (ext-proc) | `TOKEN_URL`, `ISSUER`, `DEFAULT_OUTBOUND_POLICY` (optional) |
+| `authproxy-routes` | ConfigMap (optional) | envoy-proxy (ext-proc) | `routes.yaml` with per-host token exchange rules |
+| `spiffe-helper-config` | ConfigMap | spiffe-helper | `helper.conf` (SPIRE agent address, cert paths, JWT SVID config) |
+| `envoy-config` | ConfigMap | envoy-proxy | `envoy.yaml` (full Envoy configuration) |
 
-### Outbound Token Exchange Policy
-
-The go-processor defaults to **passthrough** for outbound requests that don't match any route in `authproxy-routes`. This means agents work out-of-the-box with any LLM provider without configuring exclusions. Token exchange only happens for hosts with explicit entries in `authproxy-routes`.
-
-To configure per-target exchange, create an `authproxy-routes` ConfigMap:
+**`authproxy-routes` format** (`routes.yaml`):
 ```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: authproxy-routes
-data:
-  routes.yaml: |
-    - host: "target-service.team1.svc.cluster.local"
-      target_audience: "target-client-id"
-      token_scopes: "openid target-aud"
-    - host: "otel-collector.*.svc.cluster.local"
-      passthrough: true
+routes:
+  - host: "github-tool-mcp"
+    target_audience: "github-tool"
+    token_scopes: "openid github-tool-aud github-full-access"
+  - host: "auth-target-*"
+    target_audience: "auth-target"
+    token_scopes: "openid auth-target-aud"
 ```
 
-Set `DEFAULT_OUTBOUND_POLICY: "exchange"` in `authbridge-config` to restore legacy behavior (exchange all outbound traffic).
+The go-processor defaults to **passthrough** for outbound requests that don't match any route. Token exchange only happens for hosts with explicit entries in `authproxy-routes`. Set `DEFAULT_OUTBOUND_POLICY: "exchange"` in `authbridge-config` to restore legacy behavior.
 
 ## Shared Volume Contract
 
@@ -329,6 +329,12 @@ kubectl apply -f k8s/auth-target-deployment-webhook.yaml     # Target service
 8. **Envoy Lua filter required for inbound**: The `x-authbridge-direction: inbound` header MUST be injected via a Lua filter before ext_proc in the inbound listener. Route-level `request_headers_to_add` does NOT work because the router filter runs after ext_proc.
 
 9. **iptables backend auto-detection**: `init-iptables.sh` auto-detects `iptables-legacy` vs `iptables-nft`. Override with `IPTABLES_CMD` env var if needed. Always verify with proxy-init logs after deployment.
+
+10. **Route host patterns must match HTTP Host header**: The `host` field in `authproxy-routes` is matched against the HTTP `Host` header, which is set by the HTTP client from the URL hostname. For in-cluster calls, this is the **short Kubernetes service name** from `MCP_URL` (e.g., `github-tool-mcp`), not the FQDN. Using the wrong pattern (e.g., `*.github-issue-tool*.svc.cluster.local`) will silently fall through to the default passthrough policy.
+
+11. **Keycloak scope assignment for dynamically registered clients**: When `client-registration` auto-registers an agent as a Keycloak client, the client may not inherit all necessary scopes. The agent's own audience scope (e.g., `agent-team1-git-issue-agent-aud`) must be a **default** client scope for inbound JWT audience validation to work. Token exchange scopes (e.g., `github-tool-aud`, `github-full-access`) must be **optional** client scopes for `client_credentials` grants with explicit `scope=` to succeed. Re-run the demo's `setup_keycloak.py` after the agent is deployed to assign these scopes to the registered client.
+
+12. **Outbound passthrough is the safe default**: The `DEFAULT_OUTBOUND_POLICY` defaults to `passthrough`, which means outbound traffic to LLM inference endpoints (e.g., Ollama via `host.docker.internal`) passes through without token exchange. If this were set to `exchange`, all outbound HTTP calls would attempt token exchange and fail for non-Keycloak destinations.
 
 ## DCO Sign-Off (Mandatory)
 
