@@ -1,6 +1,6 @@
 module github.com/kagenti/kagenti-extensions/kagenti-webhook
 
-go 1.25.0
+go 1.26.1
 
 godebug default=go1.23
 
