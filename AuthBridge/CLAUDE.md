@@ -32,6 +32,9 @@ AuthBridge/
 │   └── Dockerfile                    #   Python 3.12-slim, UID/GID 1000
 │
 ├── demos/                            # Demo scenarios with full setup
+│   ├── README.md                     #   Demo index (recommended starting order)
+│   ├── weather-agent/                #   Getting-started demo (inbound validation only)
+│   │   └── demo-ui.md
 │   ├── single-target/                #   Single agent → target (SPIFFE-based)
 │   │   ├── demo.md
 │   │   ├── setup_keycloak.py
@@ -39,7 +42,7 @@ AuthBridge/
 │   ├── multi-target/                 #   Multi-target with keycloak_sync
 │   │   └── k8s/
 │   ├── github-issue/                 #   GitHub integration demo
-│   │   ├── demo.md, demo-manual.md
+│   │   ├── demo.md, demo-ui.md, demo-manual.md
 │   │   ├── setup_keycloak.py
 │   │   └── k8s/
 │   └── webhook/                      #   Webhook-based injection demo
@@ -133,12 +136,13 @@ Envoy config lives in `demos/webhook/k8s/configmaps-webhook.yaml` (the `envoy-co
 
 ## Demo Scenarios
 
-The `demos/` directory contains four demonstration scenarios:
+The `demos/` directory contains five demonstration scenarios (see `demos/README.md` for a recommended learning path):
 
+- **weather-agent/** -- Getting-started demo: inbound JWT validation with outbound passthrough. Simplest way to see AuthBridge in action (UI deployment).
 - **webhook/** -- Shows how to use the kagenti-webhook to automatically inject AuthBridge sidecars. Recommended starting point for webhook-based deployments.
 - **single-target/** -- Manual deployment demo showing agent → target communication with SPIFFE identity and token exchange.
 - **multi-target/** -- Dynamic scope assignment using `keycloak_sync.py` for agents communicating with multiple targets.
-- **github-issue/** -- External API integration (GitHub) using AuthBridge for transparent authentication.
+- **github-issue/** -- External API integration (GitHub) with inbound validation, outbound token exchange, and scope-based access control. Available as UI or manual deployment.
 
 ## Keycloak Setup Scripts
 
@@ -325,3 +329,23 @@ kubectl apply -f k8s/auth-target-deployment-webhook.yaml     # Target service
 8. **Envoy Lua filter required for inbound**: The `x-authbridge-direction: inbound` header MUST be injected via a Lua filter before ext_proc in the inbound listener. Route-level `request_headers_to_add` does NOT work because the router filter runs after ext_proc.
 
 9. **iptables backend auto-detection**: `init-iptables.sh` auto-detects `iptables-legacy` vs `iptables-nft`. Override with `IPTABLES_CMD` env var if needed. Always verify with proxy-init logs after deployment.
+
+## DCO Sign-Off (Mandatory)
+
+All commits **must** include a `Signed-off-by` trailer (Developer Certificate of Origin).
+Always use the `-s` flag when committing:
+
+```sh
+git commit -s -m "fix: Fix token exchange"
+```
+
+PRs without DCO sign-off will fail CI checks.
+
+## Commit Attribution Policy
+
+Do NOT use `Co-Authored-By` trailers for AI attribution. Use `Assisted-By` instead:
+
+    Assisted-By: Claude (Anthropic AI) <noreply@anthropic.com>
+
+Never add `Co-authored-by`, `Made-with`, or similar trailers that GitHub parses as co-authorship.
+See the [root CLAUDE.md](../CLAUDE.md) for full commit policy details.
