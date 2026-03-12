@@ -1,16 +1,15 @@
 # E2E Kind Tests
 #
 # Runs the webhook end-to-end test suite on a local Kind cluster.
-# Tests both the Go webhook manager (Ginkgo) and the Python injection tests (pytest).
+# Tests the Python injection tests (pytest) against a real Kind cluster.
 #
 # Workflow:
 #   1. Create Kind cluster
 #   2. Install cert-manager (required for webhook TLS)
 #   3. Build webhook Docker image and load into Kind
-#   4. Run Go e2e tests (deploy webhook, validate manager + metrics + cert, undeploy)
-#   5. Redeploy webhook for Python e2e tests
-#   6. Run Python e2e tests (health + injection behavior)
-#   7. Cleanup
+#   4. Deploy webhook via kustomize (make deploy)
+#   5. Run Python e2e tests (health + injection behavior)
+#   6. Cleanup
 #
 name: E2E Kind Tests
 
@@ -27,8 +26,6 @@ permissions:
   contents: read
 
 env:
-  # Webhook image used by both Go e2e (make test-e2e) and Python e2e deployment
-  # Must match the projectImage hardcoded in kagenti-webhook/test/e2e/e2e_suite_test.go
   WEBHOOK_IMAGE: example.com/kagenti-webhook:v0.0.1
   KIND_CLUSTER: kind
   CERT_MANAGER_VERSION: v1.16.3
@@ -75,7 +72,6 @@ jobs:
 
       # -----------------------------------------------------------------------
       # Build and load webhook image
-      # Image is built once and reused across both Go and Python e2e steps.
       # -----------------------------------------------------------------------
 
       - name: Build webhook Docker image
@@ -86,26 +82,10 @@ jobs:
         run: kind load docker-image ${{ env.WEBHOOK_IMAGE }} --name ${{ env.KIND_CLUSTER }}
 
       # -----------------------------------------------------------------------
-      # Go e2e tests (Ginkgo)
-      # make test-e2e handles: deploy webhook, validate, undeploy
-      # CERT_MANAGER_INSTALL_SKIP=true: cert-manager already installed above
-      # PROMETHEUS_INSTALL_SKIP=true: Prometheus not needed for webhook e2e
+      # Deploy webhook
       # -----------------------------------------------------------------------
 
-      - name: Run Go e2e tests
-        working-directory: kagenti-webhook
-        env:
-          CERT_MANAGER_INSTALL_SKIP: "true"
-          PROMETHEUS_INSTALL_SKIP: "true"
-          KIND_CLUSTER: ${{ env.KIND_CLUSTER }}
-        run: make test-e2e
-
-      # -----------------------------------------------------------------------
-      # Deploy webhook for Python e2e tests
-      # The Go e2e AfterAll undeployed the webhook, so we redeploy here.
-      # -----------------------------------------------------------------------
-
-      - name: Deploy webhook for Python e2e tests
+      - name: Deploy webhook
         working-directory: kagenti-webhook
         run: make deploy IMG=${{ env.WEBHOOK_IMAGE }}
 
