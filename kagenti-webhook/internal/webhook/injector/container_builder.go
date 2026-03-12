@@ -364,18 +364,6 @@ func (b *ContainerBuilder) BuildEnvoyProxyContainerWithSpireOption(spireEnabled 
 				},
 			},
 			{
-				Name:  "CLIENT_ID_FILE",
-				Value: "/shared/client-id.txt",
-			},
-			{
-				Name:  "CLIENT_SECRET_FILE",
-				Value: "/shared/client-secret.txt",
-			},
-			{
-				Name:  "ROUTES_CONFIG_PATH",
-				Value: "/etc/authproxy/routes.yaml",
-			},
-			{
 				Name: "DEFAULT_OUTBOUND_POLICY",
 				ValueFrom: &corev1.EnvVarSource{
 					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{

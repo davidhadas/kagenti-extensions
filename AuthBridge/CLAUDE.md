@@ -75,7 +75,7 @@ The core ext-proc that handles both traffic directions:
 - The `DEFAULT_OUTBOUND_POLICY` env var controls the fallback behavior (default: `passthrough`)
 
 **Route resolver (outbound):**
-- Reads `/etc/authproxy-routes/routes.yaml` (path controlled by `ROUTES_CONFIG_PATH` env var)
+- Reads `/etc/authproxy/routes.yaml` (default path; override with `ROUTES_CONFIG_PATH` env var in standalone deployments)
 - Each route entry has: `host` (glob pattern), `target_audience`, `token_scopes`
 - Host matching uses `filepath.Match` semantics (supports `*`, `?`, `[...]` patterns)
 - Most commonly, `host` is a plain Kubernetes service name (e.g., `github-tool-mcp`) because the HTTP client sets the Host header from the URL hostname
@@ -86,7 +86,7 @@ The core ext-proc that handles both traffic directions:
 - Reads `CLIENT_ID` from `/shared/client-id.txt` (file) or `CLIENT_ID` env var (fallback)
 - Reads `CLIENT_SECRET` from `/shared/client-secret.txt` (file) or `CLIENT_SECRET` env var (fallback)
 - Static config from env vars: `TOKEN_URL`, `ISSUER`, `EXPECTED_AUDIENCE`
-- Outbound route config from `ROUTES_CONFIG_PATH` (default `/etc/authproxy-routes/routes.yaml`). Target audience and scopes are configured per-route only.
+- Outbound route config from `/etc/authproxy/routes.yaml` (default; override with `ROUTES_CONFIG_PATH` env var in standalone deployments). Target audience and scopes are configured per-route only.
 - Default outbound policy from `DEFAULT_OUTBOUND_POLICY` env var: `"passthrough"` (default) or `"exchange"`
 - JWKS URL is derived from TOKEN_URL: replaces `/token` suffix with `/certs`
 
