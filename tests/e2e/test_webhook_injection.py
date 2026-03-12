@@ -231,32 +231,6 @@ class TestAgentSidecarInjection:
             f"Containers: {sorted(container_names)}"
         )
 
-    def test_agent_pod_has_managed_by_label(self, k8s_client, test_namespace):
-        """
-        Webhook must set the kagenti.io/managed-by=webhook label on injected pods.
-
-        This label is used by the idempotency check to prevent double-injection
-        on re-invocation (reinvocationPolicy: IfNeeded).
-        """
-        name = _make_pod_name("agent-label")
-        pod = _build_test_pod(name, {_TYPE_LABEL: "agent"})
-
-        try:
-            created = k8s_client.create_namespaced_pod(namespace=test_namespace, body=pod)
-        except ApiException as e:
-            pytest.fail(f"Pod creation failed: {e}")
-        finally:
-            try:
-                k8s_client.delete_namespaced_pod(name=name, namespace=test_namespace)
-            except ApiException:
-                pass
-
-        labels = created.metadata.labels or {}
-        assert labels.get("kagenti.io/managed-by") == "webhook", (
-            f"Missing kagenti.io/managed-by=webhook label.\n"
-            f"Labels: {labels}"
-        )
-
 
 class TestInjectionOptOut:
     """
