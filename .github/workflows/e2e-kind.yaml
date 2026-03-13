@@ -102,7 +102,12 @@ jobs:
           # cert-manager needs a moment to inject the CA bundle into the
           # MutatingWebhookConfiguration after the Certificate is ready.
           WEBHOOK_CFG=$(kubectl get mutatingwebhookconfiguration \
-            -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep authbridge | head -1)
+            -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep kagenti-webhook | head -1)
+          if [ -z "$WEBHOOK_CFG" ]; then
+            echo "ERROR: no MutatingWebhookConfiguration matching 'kagenti-webhook' found"
+            kubectl get mutatingwebhookconfiguration
+            exit 1
+          fi
           echo "Waiting for CA bundle injection in: $WEBHOOK_CFG"
           for i in $(seq 1 30); do
             CA=$(kubectl get mutatingwebhookconfiguration "$WEBHOOK_CFG" \
