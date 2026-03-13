@@ -43,6 +43,7 @@ data:
   ISSUER: "http://keycloak.localtest.me:8080/realms/demo"
   # EXPECTED_AUDIENCE: Optional. Set to the workload's SPIFFE ID to enable
   # inbound audience validation (e.g., spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>).
+  # Recommended for production to prevent token replay attacks across workloads.
   # When not set, audience validation is skipped (only signature and issuer are checked).
   # EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/team1/sa/agent"
   # PLATFORM_CLIENT_IDS: Comma-separated list of Keycloak client IDs that should

@@ -42,6 +42,7 @@ data:
   # ISSUER: Set explicitly because the internal KEYCLOAK_URL differs from the frontend URL.
   ISSUER: "http://keycloak.localtest.me:8080/realms/kagenti"
   # EXPECTED_AUDIENCE: Optional. Set to the workload's SPIFFE ID to enable inbound audience validation.
+  # Recommended for production to prevent token replay attacks across workloads.
   # EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/team1/sa/git-issue-agent"
 
 ---
