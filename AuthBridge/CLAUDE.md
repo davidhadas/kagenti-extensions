@@ -85,7 +85,9 @@ The core ext-proc that handles both traffic directions:
 - Waits up to 60s for credential files from client-registration (`waitForCredentials`)
 - Reads `CLIENT_ID` from `/shared/client-id.txt` (file) or `CLIENT_ID` env var (fallback)
 - Reads `CLIENT_SECRET` from `/shared/client-secret.txt` (file) or `CLIENT_SECRET` env var (fallback)
-- Static config from env vars: `TOKEN_URL`, `ISSUER`, `EXPECTED_AUDIENCE`
+- `TOKEN_URL`: explicit env var, or auto-derived from `KEYCLOAK_URL` + `KEYCLOAK_REALM` (i.e. `{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token`)
+- `ISSUER`: explicit env var, or auto-derived from `KEYCLOAK_URL` + `KEYCLOAK_REALM` (i.e. `{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}`)
+- `EXPECTED_AUDIENCE`: optional, set in `authbridge-config` ConfigMap to enable inbound audience validation
 - Outbound route config from `/etc/authproxy/routes.yaml` (default; override with `ROUTES_CONFIG_PATH` env var in standalone deployments). Target audience and scopes are configured per-route only.
 - Default outbound policy from `DEFAULT_OUTBOUND_POLICY` env var: `"passthrough"` (default) or `"exchange"`
 - JWKS URL is derived from TOKEN_URL: replaces `/token` suffix with `/certs`
@@ -175,9 +177,8 @@ When the kagenti-webhook injects sidecars, these ConfigMaps must exist in the ta
 
 | Resource | Kind | Consumer | Key Fields |
 |----------|------|----------|------------|
-| `environments` | ConfigMap | client-registration | `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `SPIRE_ENABLED` |
+| `authbridge-config` | ConfigMap | client-registration, envoy-proxy (ext-proc) | `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `PLATFORM_CLIENT_IDS` (optional), `TOKEN_URL` (optional, derived), `ISSUER` (optional, derived or explicit), `EXPECTED_AUDIENCE` (optional), `DEFAULT_OUTBOUND_POLICY` (optional). Target audience and scopes are configured per-route in `authproxy-routes`. |
 | `keycloak-admin-secret` | Secret | client-registration | `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` |
-| `authbridge-config` | ConfigMap | envoy-proxy (ext-proc) | `TOKEN_URL`, `ISSUER`, `DEFAULT_OUTBOUND_POLICY` (optional). Target audience and scopes are configured per-route in `authproxy-routes`. |
 | `authproxy-routes` | ConfigMap (optional) | envoy-proxy (ext-proc) | `routes.yaml` with per-host token exchange rules |
 | `spiffe-helper-config` | ConfigMap | spiffe-helper | `helper.conf` (SPIRE agent address, cert paths, JWT SVID config) |
 | `envoy-config` | ConfigMap | envoy-proxy | `envoy.yaml` (full Envoy configuration) |

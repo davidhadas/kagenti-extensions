@@ -7,33 +7,23 @@
 # Note: Update the namespace in metadata if applying to a different namespace
 
 ---
-# environments ConfigMap - Used by kagenti-client-registration container
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: environments
-  namespace: team1
-data:
-  SPIRE_ENABLED: "true"
-  KEYCLOAK_URL: "http://keycloak-service.keycloak.svc:8080"
-  KEYCLOAK_REALM: "demo"
-  # Demo/development only: do NOT use hardcoded admin credentials in production.
-  # For production deployments, supply these via a Kubernetes Secret and reference
-  # them from your Pod/Deployment using env.valueFrom.secretKeyRef instead of this ConfigMap.
-  KEYCLOAK_ADMIN_USERNAME: "admin"
-  KEYCLOAK_ADMIN_PASSWORD: "admin"
-
----
-# authbridge-config ConfigMap - Used by envoy-proxy for token exchange
+# authbridge-config ConfigMap - Unified config for both client-registration and envoy-proxy (go-processor)
+#
+# client-registration reads: KEYCLOAK_URL, KEYCLOAK_REALM, PLATFORM_CLIENT_IDS
+# go-processor reads: KEYCLOAK_URL, KEYCLOAK_REALM (to derive TOKEN_URL/ISSUER), TOKEN_URL, ISSUER,
+#                     EXPECTED_AUDIENCE, DEFAULT_OUTBOUND_POLICY
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: authbridge-config
   namespace: team1
 data:
-  TOKEN_URL: "http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token"
-  # ISSUER: Required. Keycloak frontend URL used as token issuer for inbound JWT validation.
-  # Must match the "iss" claim in tokens (Keycloak's frontend URL).
+  KEYCLOAK_URL: "http://keycloak-service.keycloak.svc:8080"
+  KEYCLOAK_REALM: "demo"
+  # TOKEN_URL: Optional. Auto-derived from KEYCLOAK_URL + KEYCLOAK_REALM if not set.
+  # TOKEN_URL: "http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token"
+  # ISSUER: Set explicitly when the internal KEYCLOAK_URL differs from the frontend URL
+  # that appears in token "iss" claims (split-horizon DNS).
   ISSUER: "http://keycloak.localtest.me:8080/realms/demo"
 
 ---

@@ -159,9 +159,9 @@ kubectl create secret generic keycloak-admin-secret -n team1 \
   --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-The Kagenti installer creates default ConfigMaps (`environments`,
-`spiffe-helper-config`, `envoy-config`, `authbridge-config`) with the correct
-`kagenti` realm settings. No additional ConfigMaps are needed for this demo.
+The Kagenti installer creates default ConfigMaps (`authbridge-config`,
+`spiffe-helper-config`, `envoy-config`) with the correct `kagenti` realm
+settings. No additional ConfigMaps are needed for this demo.
 
 ---
 
@@ -533,7 +533,7 @@ kubectl rollout status deployment/weather-service -n team1 --timeout=180s
 
 **Symptom:** `{"error":"invalid_client","error_description":"Invalid client or Invalid client credentials"}`
 
-**Cause:** The `keycloak-admin-secret` Secret or `environments` ConfigMap was missing
+**Cause:** The `keycloak-admin-secret` Secret or `authbridge-config` ConfigMap was missing
 or incorrect at startup, so the client-registration sidecar couldn't register the client.
 
 **Fix:**
@@ -542,8 +542,8 @@ or incorrect at startup, so the client-registration sidecar couldn't register th
 # 1. Verify the keycloak-admin-secret exists
 kubectl get secret keycloak-admin-secret -n team1
 
-# 2. Verify the installer's environments ConfigMap has the correct realm
-kubectl get configmap environments -n team1 -o jsonpath='{.data.KEYCLOAK_REALM}'
+# 2. Verify the authbridge-config ConfigMap has the correct realm
+kubectl get configmap authbridge-config -n team1 -o jsonpath='{.data.KEYCLOAK_REALM}'
 # Should show: kagenti
 
 # 3. Restart the agent to retry registration

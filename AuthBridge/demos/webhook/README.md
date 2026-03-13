@@ -82,20 +82,18 @@ AUTHBRIDGE_DEMO=true AUTHBRIDGE_NAMESPACE=myapp ./scripts/webhook-rollout.sh
 This automatically:
 1. Builds and deploys the kagenti-webhook
 2. Creates the namespace
-3. Applies all required ConfigMaps (environments, authbridge-config, envoy-config, spiffe-helper-config)
+3. Applies all required ConfigMaps (authbridge-config, envoy-config, spiffe-helper-config)
 
-**Note for custom deployments:** If deploying to a different namespace or using a different service account, update the `EXPECTED_AUDIENCE` value in `configmaps-webhook.yaml` to match your agent's SPIFFE ID:
-```yaml
-EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/<your-namespace>/sa/<your-service-account>"
-```
+**Note for custom deployments:** `TOKEN_URL` and `ISSUER` are auto-derived from `KEYCLOAK_URL` + `KEYCLOAK_REALM`. Set `ISSUER` explicitly only when the internal `KEYCLOAK_URL` differs from the frontend URL that appears in token `iss` claims (split-horizon DNS). Set `EXPECTED_AUDIENCE` to the workload's SPIFFE ID to enable inbound audience validation.
 
 The ConfigMaps include:
 
-- `environments` - Keycloak connection settings for client-registration
-- `authbridge-config` - Token exchange and inbound validation configuration for envoy-proxy:
-  - `TOKEN_URL` - Keycloak token endpoint for token exchange
-  - `ISSUER` - Expected JWT issuer for inbound validation (required)
-  - `EXPECTED_AUDIENCE` - Expected audience for inbound validation (optional, if not set audience validation is skipped)
+- `authbridge-config` - Unified Keycloak configuration for both client-registration and envoy-proxy:
+  - `KEYCLOAK_URL` - Keycloak server URL (used by client-registration and to derive TOKEN_URL/ISSUER)
+  - `KEYCLOAK_REALM` - Keycloak realm name
+  - `TOKEN_URL` - Keycloak token endpoint (optional, auto-derived from KEYCLOAK_URL + KEYCLOAK_REALM)
+  - `ISSUER` - Expected JWT issuer for inbound validation (optional, auto-derived or set explicitly for split-horizon DNS)
+  - `EXPECTED_AUDIENCE` - Expected audience for inbound validation (optional, set to workload's SPIFFE ID)
   - Target audience and scopes for outbound token exchange are configured per-route in the `authproxy-routes` ConfigMap
 - `spiffe-helper-config` - SPIFFE helper configuration (for SPIRE mode)
 - `envoy-config` - Envoy proxy configuration
@@ -360,7 +358,6 @@ kubectl delete serviceaccount agent -n team1
 ### 2. Delete ConfigMaps
 
 ```bash
-kubectl delete configmap environments -n team1
 kubectl delete configmap authbridge-config -n team1
 kubectl delete configmap envoy-config -n team1
 kubectl delete configmap spiffe-helper-config -n team1

@@ -7,23 +7,6 @@
 # Note: Update the namespace in metadata if applying to a different namespace
 
 ---
-# environments ConfigMap - Used by kagenti-client-registration container
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: environments
-  namespace: team1
-data:
-  SPIRE_ENABLED: "true"
-  KEYCLOAK_URL: "http://keycloak-service.keycloak.svc:8080"
-  KEYCLOAK_REALM: "demo"
-  # Comma-separated list of Keycloak client IDs that should receive the agent's
-  # audience scope. This allows existing clients (like the UI) to include the
-  # agent's audience in their tokens without manual Keycloak configuration.
-  # Default: "kagenti" (the platform UI client)
-  # PLATFORM_CLIENT_IDS: "kagenti"
-
----
 # keycloak-admin-secret - Keycloak admin credentials for client registration
 # Replace the placeholder values with your actual admin credentials.
 apiVersion: v1
@@ -37,23 +20,34 @@ stringData:
   KEYCLOAK_ADMIN_PASSWORD: "admin"
 
 ---
-# authbridge-config ConfigMap - Used by envoy-proxy for token exchange and inbound validation
+# authbridge-config ConfigMap - Unified config for both client-registration and envoy-proxy (go-processor)
+#
+# client-registration reads: KEYCLOAK_URL, KEYCLOAK_REALM, PLATFORM_CLIENT_IDS
+# go-processor reads: KEYCLOAK_URL, KEYCLOAK_REALM (to derive TOKEN_URL/ISSUER), TOKEN_URL, ISSUER,
+#                     EXPECTED_AUDIENCE, DEFAULT_OUTBOUND_POLICY
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: authbridge-config
   namespace: team1
 data:
-  TOKEN_URL: "http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token"
-  # ISSUER: Required. Keycloak frontend URL used as token issuer for inbound JWT validation.
-  # Must match the "iss" claim in tokens (Keycloak's frontend URL).
+  KEYCLOAK_URL: "http://keycloak-service.keycloak.svc:8080"
+  KEYCLOAK_REALM: "demo"
+  # TOKEN_URL: Optional. Auto-derived from KEYCLOAK_URL + KEYCLOAK_REALM if not set.
+  # Only set explicitly when the token endpoint differs from the standard Keycloak path.
+  # TOKEN_URL: "http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token"
+  # ISSUER: Optional when KEYCLOAK_URL points to the frontend. Auto-derived from
+  # KEYCLOAK_URL + KEYCLOAK_REALM if not set. Set explicitly when the internal
+  # KEYCLOAK_URL differs from the frontend URL that appears in token "iss" claims
+  # (split-horizon DNS).
   ISSUER: "http://keycloak.localtest.me:8080/realms/demo"
-  # EXPECTED_AUDIENCE: Optional. Expected audience for inbound JWT validation.
-  # For SPIFFE-based deployments, this should match the agent's SPIFFE ID.
-  # Format: spiffe://localtest.me/ns/<namespace>/sa/<service-account>
-  # Update this value if deploying to a different namespace or using a different service account.
-  # If not set, audience validation is skipped (issuer and signature validation still occur).
-  EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/team1/sa/agent"
+  # EXPECTED_AUDIENCE: Optional. Set to the workload's SPIFFE ID to enable
+  # inbound audience validation (e.g., spiffe://<trust-domain>/ns/<namespace>/sa/<service-account>).
+  # When not set, audience validation is skipped (only signature and issuer are checked).
+  # EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/team1/sa/agent"
+  # PLATFORM_CLIENT_IDS: Comma-separated list of Keycloak client IDs that should
+  # receive the agent's audience scope. Default: "kagenti"
+  # PLATFORM_CLIENT_IDS: "kagenti"
   # DEFAULT_OUTBOUND_POLICY: Controls behavior for outbound requests that don't
   # match any route in authproxy-routes. Default is "passthrough" (skip exchange).
   # Set to "exchange" to restore legacy behavior (exchange all outbound traffic).

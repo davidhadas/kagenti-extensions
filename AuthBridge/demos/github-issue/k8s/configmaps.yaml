@@ -1,9 +1,9 @@
 # Demo-specific ConfigMap overrides for GitHub Issue Agent + AuthBridge
 #
-# The Kagenti installer already creates correct defaults for environments,
-# spiffe-helper-config, envoy-config, and authbridge-config (with the kagenti
-# realm). This file overrides:
-# - authbridge-config: inbound validation and outbound exchange settings
+# The Kagenti installer already creates correct defaults for authbridge-config,
+# spiffe-helper-config, and envoy-config (with the kagenti realm). This file
+# overrides:
+# - authbridge-config: Keycloak connection, inbound validation, and outbound exchange settings
 # - authproxy-routes: per-target token exchange routes
 #
 # The go-processor defaults to "passthrough" for outbound traffic, meaning
@@ -14,29 +14,35 @@
 #   kubectl apply -f configmaps.yaml
 #
 # Note: These manifests default to namespace "team1". If you deploy to a different
-#       namespace, update the metadata.namespace and EXPECTED_AUDIENCE accordingly.
+#       namespace, update the metadata.namespace accordingly. Set EXPECTED_AUDIENCE
+#       to the workload's SPIFFE ID to enable inbound audience validation.
 
 ---
-# authbridge-config ConfigMap - Used by envoy-proxy for token exchange
+# authbridge-config ConfigMap - Unified config for both client-registration and envoy-proxy
 #
-# This ConfigMap controls two AuthBridge behaviors:
-#   1. INBOUND validation: Validates JWT tokens on incoming requests to the agent
-#   2. OUTBOUND exchange:  Exchanges tokens when the agent calls the GitHub tool
+# This ConfigMap controls:
+#   1. Client registration: KEYCLOAK_URL, KEYCLOAK_REALM for Keycloak client setup
+#   2. INBOUND validation: Validates JWT tokens on incoming requests to the agent
+#   3. OUTBOUND exchange:  Exchanges tokens when the agent calls the GitHub tool
 #
-# TOKEN_URL and ISSUER match the installer defaults (kagenti realm) and are
-# included because kubectl apply replaces the entire ConfigMap.
+# KEYCLOAK_URL and KEYCLOAK_REALM match the installer defaults (kagenti realm)
+# and are included because kubectl apply replaces the entire ConfigMap.
+# TOKEN_URL and ISSUER are auto-derived from KEYCLOAK_URL + KEYCLOAK_REALM.
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: authbridge-config
   namespace: team1
 data:
-  TOKEN_URL: "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token"
+  KEYCLOAK_URL: "http://keycloak-service.keycloak.svc:8080"
+  KEYCLOAK_REALM: "kagenti"
+  # TOKEN_URL: Auto-derived from KEYCLOAK_URL + KEYCLOAK_REALM. Only set explicitly
+  # when the token endpoint differs from the standard Keycloak path.
+  # TOKEN_URL: "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token"
+  # ISSUER: Set explicitly because the internal KEYCLOAK_URL differs from the frontend URL.
   ISSUER: "http://keycloak.localtest.me:8080/realms/kagenti"
-  # EXPECTED_AUDIENCE: The agent's SPIFFE ID. Validates inbound tokens are intended for this agent.
-  # Format: spiffe://localtest.me/ns/<namespace>/sa/<service-account>
-  # Update if deploying to a different namespace or using a different service account.
-  EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/team1/sa/git-issue-agent"
+  # EXPECTED_AUDIENCE: Optional. Set to the workload's SPIFFE ID to enable inbound audience validation.
+  # EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/team1/sa/git-issue-agent"
 
 ---
 # authproxy-routes ConfigMap - Per-target token exchange routes

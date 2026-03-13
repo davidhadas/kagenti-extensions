@@ -316,21 +316,19 @@ def main():
     print(f"""
 Create these ConfigMaps in the {namespace} namespace:
 
-# 1. environments ConfigMap (for client-registration)
-kubectl create configmap environments -n {namespace} \\
-  --from-literal=SPIRE_ENABLED=true \\
+# 1. authbridge-config ConfigMap (for both client-registration and envoy-proxy)
+#    TOKEN_URL and ISSUER are auto-derived from KEYCLOAK_URL + KEYCLOAK_REALM.
+#    Set ISSUER explicitly only when the internal URL differs from the frontend URL.
+#    Set EXPECTED_AUDIENCE to the workload's SPIFFE ID to enable inbound audience validation.
+kubectl create configmap authbridge-config -n {namespace} \\
   --from-literal=KEYCLOAK_URL=http://keycloak-service.keycloak.svc:8080 \\
   --from-literal=KEYCLOAK_REALM=demo \\
+  --from-literal=ISSUER=http://keycloak.localtest.me:8080/realms/demo
+
+# 2. keycloak-admin-secret Secret (for client-registration)
+kubectl create secret generic keycloak-admin-secret -n {namespace} \\
   --from-literal=KEYCLOAK_ADMIN_USERNAME=admin \\
   --from-literal=KEYCLOAK_ADMIN_PASSWORD=admin
-
-# 2. authbridge-config ConfigMap (for envoy-proxy)
-kubectl create configmap authbridge-config -n {namespace} \\
-  --from-literal=TOKEN_URL=http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \\
-  --from-literal=ISSUER=http://keycloak.localtest.me:8080/realms/demo \\
-  --from-literal=EXPECTED_AUDIENCE=spiffe://localtest.me/ns/{namespace}/sa/{service_account} \\
-  --from-literal=TARGET_AUDIENCE=auth-target \\
-  --from-literal=TARGET_SCOPES="openid auth-target-aud"
 
 # 3. spiffe-helper-config ConfigMap (for SPIRE-enabled mode)
 kubectl apply -f - <<EOF

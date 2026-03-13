@@ -111,7 +111,7 @@ func (b *ContainerBuilder) BuildClientRegistrationContainerWithSpireOption(name,
 			ValueFrom: &corev1.EnvVarSource{
 				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: "environments",
+						Name: "authbridge-config",
 					},
 					Key:      "KEYCLOAK_URL",
 					Optional: ptr.To(true),
@@ -123,9 +123,10 @@ func (b *ContainerBuilder) BuildClientRegistrationContainerWithSpireOption(name,
 			ValueFrom: &corev1.EnvVarSource{
 				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: "environments",
+						Name: "authbridge-config",
 					},
-					Key: "KEYCLOAK_REALM",
+					Key:      "KEYCLOAK_REALM",
+					Optional: ptr.To(true),
 				},
 			},
 		},
@@ -156,20 +157,20 @@ func (b *ContainerBuilder) BuildClientRegistrationContainerWithSpireOption(name,
 			Value: clientName,
 		},
 		{
-			Name:  "SECRET_FILE_PATH",
-			Value: "/shared/client-secret.txt",
-		},
-		{
 			Name: "PLATFORM_CLIENT_IDS",
 			ValueFrom: &corev1.EnvVarSource{
 				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: "environments",
+						Name: "authbridge-config",
 					},
 					Key:      "PLATFORM_CLIENT_IDS",
 					Optional: ptr.To(true),
 				},
 			},
+		},
+		{
+			Name:  "SECRET_FILE_PATH",
+			Value: "/shared/client-secret.txt",
 		},
 	}
 
@@ -299,6 +300,97 @@ func (b *ContainerBuilder) BuildEnvoyProxyContainerWithSpireOption(spireEnabled 
 		})
 	}
 
+	env := []corev1.EnvVar{
+		{
+			Name: "KEYCLOAK_URL",
+			ValueFrom: &corev1.EnvVarSource{
+				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "authbridge-config",
+					},
+					Key:      "KEYCLOAK_URL",
+					Optional: ptr.To(true),
+				},
+			},
+		},
+		{
+			Name: "KEYCLOAK_REALM",
+			ValueFrom: &corev1.EnvVarSource{
+				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "authbridge-config",
+					},
+					Key:      "KEYCLOAK_REALM",
+					Optional: ptr.To(true),
+				},
+			},
+		},
+		{
+			Name: "TOKEN_URL",
+			ValueFrom: &corev1.EnvVarSource{
+				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "authbridge-config",
+					},
+					Key:      "TOKEN_URL",
+					Optional: ptr.To(true),
+				},
+			},
+		},
+		{
+			Name: "ISSUER",
+			ValueFrom: &corev1.EnvVarSource{
+				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "authbridge-config",
+					},
+					Key:      "ISSUER",
+					Optional: ptr.To(true),
+				},
+			},
+		},
+	}
+
+	env = append(env, corev1.EnvVar{
+		Name: "EXPECTED_AUDIENCE",
+		ValueFrom: &corev1.EnvVarSource{
+			ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{
+					Name: "authbridge-config",
+				},
+				Key:      "EXPECTED_AUDIENCE",
+				Optional: ptr.To(true),
+			},
+		},
+	})
+
+	env = append(env,
+		corev1.EnvVar{
+			Name:  "CLIENT_ID_FILE",
+			Value: "/shared/client-id.txt",
+		},
+		corev1.EnvVar{
+			Name:  "CLIENT_SECRET_FILE",
+			Value: "/shared/client-secret.txt",
+		},
+		corev1.EnvVar{
+			Name:  "ROUTES_CONFIG_PATH",
+			Value: "/etc/authproxy/routes.yaml",
+		},
+		corev1.EnvVar{
+			Name: "DEFAULT_OUTBOUND_POLICY",
+			ValueFrom: &corev1.EnvVarSource{
+				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: "authbridge-config",
+					},
+					Key:      "DEFAULT_OUTBOUND_POLICY",
+					Optional: ptr.To(true),
+				},
+			},
+		},
+	)
+
 	return corev1.Container{
 		Name:            EnvoyProxyContainerName,
 		Image:           b.cfg.Images.EnvoyProxy,
@@ -326,56 +418,7 @@ func (b *ContainerBuilder) BuildEnvoyProxyContainerWithSpireOption(spireEnabled 
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},
-		Env: []corev1.EnvVar{
-			{
-				Name: "TOKEN_URL",
-				ValueFrom: &corev1.EnvVarSource{
-					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "authbridge-config",
-						},
-						Key:      "TOKEN_URL",
-						Optional: ptr.To(true),
-					},
-				},
-			},
-			{
-				Name: "ISSUER",
-				ValueFrom: &corev1.EnvVarSource{
-					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "authbridge-config",
-						},
-						Key:      "ISSUER",
-						Optional: ptr.To(true),
-					},
-				},
-			},
-			{
-				Name: "EXPECTED_AUDIENCE",
-				ValueFrom: &corev1.EnvVarSource{
-					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "authbridge-config",
-						},
-						Key:      "EXPECTED_AUDIENCE",
-						Optional: ptr.To(true),
-					},
-				},
-			},
-			{
-				Name: "DEFAULT_OUTBOUND_POLICY",
-				ValueFrom: &corev1.EnvVarSource{
-					ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: "authbridge-config",
-						},
-						Key:      "DEFAULT_OUTBOUND_POLICY",
-						Optional: ptr.To(true),
-					},
-				},
-			},
-		},
+		Env: env,
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:  ptr.To(b.cfg.Proxy.UID),
 			RunAsGroup: ptr.To(b.cfg.Proxy.UID),

@@ -411,7 +411,7 @@ setup() {
     else
         info "ConfigMaps YAML not found at ${CONFIGMAPS_YAML}"
         info "Copying ConfigMaps from team1 namespace instead..."
-        for cm in environments authbridge-config spiffe-helper-config envoy-config; do
+        for cm in authbridge-config spiffe-helper-config envoy-config; do
             kubectl get configmap "$cm" -n team1 -o yaml 2>/dev/null \
                 | sed "s/namespace: team1/namespace: ${DEMO_NS}/g" \
                 | kubectl apply -f - 2>/dev/null \

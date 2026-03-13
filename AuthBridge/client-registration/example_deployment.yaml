@@ -6,7 +6,7 @@ metadata:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: environments
+  name: authbridge-config
   namespace: my-agent
 data:
   SPIRE_ENABLED: "false"
@@ -72,18 +72,18 @@ spec:
             - name: SPIRE_ENABLED
               valueFrom:
                 configMapKeyRef:
-                  name: environments
+                  name: authbridge-config
                   key: SPIRE_ENABLED
             - name: KEYCLOAK_URL
               valueFrom:
                 configMapKeyRef:
-                  name: environments
+                  name: authbridge-config
                   key: KEYCLOAK_URL
                   optional: true
             - name: KEYCLOAK_REALM
               valueFrom:
                 configMapKeyRef:
-                  name: environments
+                  name: authbridge-config
                   key: KEYCLOAK_REALM
             - name: KEYCLOAK_ADMIN_USERNAME
               valueFrom:

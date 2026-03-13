@@ -120,6 +120,10 @@ func TestBuildClientRegistrationContainer_HasPlatformClientIDsEnv(t *testing.T) 
 				t.Error("PLATFORM_CLIENT_IDS should reference a ConfigMap key")
 				break
 			}
+			if env.ValueFrom.ConfigMapKeyRef.Name != "authbridge-config" {
+				t.Errorf("PLATFORM_CLIENT_IDS ConfigMapKeyRef.Name = %q, want %q",
+					env.ValueFrom.ConfigMapKeyRef.Name, "authbridge-config")
+			}
 			if env.ValueFrom.ConfigMapKeyRef.Key != "PLATFORM_CLIENT_IDS" {
 				t.Errorf("PLATFORM_CLIENT_IDS key = %q, want PLATFORM_CLIENT_IDS",
 					env.ValueFrom.ConfigMapKeyRef.Key)
@@ -177,12 +181,85 @@ func TestBuildClientRegistrationContainer_NonSensitiveKeysFromConfigMap(t *testi
 				t.Errorf("env %q must use ConfigMapKeyRef", key)
 				continue
 			}
-			if env.ValueFrom.ConfigMapKeyRef.Name != "environments" {
-				t.Errorf("env %q ConfigMapKeyRef.Name = %q, want %q", key, env.ValueFrom.ConfigMapKeyRef.Name, "environments")
+			if env.ValueFrom.ConfigMapKeyRef.Name != "authbridge-config" {
+				t.Errorf("env %q ConfigMapKeyRef.Name = %q, want %q", key, env.ValueFrom.ConfigMapKeyRef.Name, "authbridge-config")
 			}
 		}
 		if !found {
 			t.Errorf("client-registration container missing env var %q", key)
 		}
+	}
+}
+
+func TestBuildClientRegistrationContainer_HasSecretFilePath(t *testing.T) {
+	builder := NewContainerBuilder(config.CompiledDefaults())
+	container := builder.BuildClientRegistrationContainerWithSpireOption("my-app", "my-ns", true)
+
+	found := false
+	for _, env := range container.Env {
+		if env.Name == "SECRET_FILE_PATH" {
+			found = true
+			if env.Value != "/shared/client-secret.txt" {
+				t.Errorf("SECRET_FILE_PATH should be /shared/client-secret.txt, got %s", env.Value)
+			}
+		}
+	}
+	if !found {
+		t.Error("client-registration container should have SECRET_FILE_PATH env var for backwards compatibility")
+	}
+}
+
+func TestBuildEnvoyProxyContainer_HasKeycloakURLAndRealm(t *testing.T) {
+	builder := NewContainerBuilder(config.CompiledDefaults())
+	container := builder.BuildEnvoyProxyContainerWithSpireOption(true)
+
+	for _, key := range []string{"KEYCLOAK_URL", "KEYCLOAK_REALM"} {
+		found := false
+		for _, env := range container.Env {
+			if env.Name == key {
+				found = true
+				if env.ValueFrom == nil || env.ValueFrom.ConfigMapKeyRef == nil {
+					t.Errorf("env %q must use ConfigMapKeyRef", key)
+					break
+				}
+				if env.ValueFrom.ConfigMapKeyRef.Name != "authbridge-config" {
+					t.Errorf("env %q ConfigMapKeyRef.Name = %q, want %q", key, env.ValueFrom.ConfigMapKeyRef.Name, "authbridge-config")
+				}
+				if env.ValueFrom.ConfigMapKeyRef.Optional == nil || !*env.ValueFrom.ConfigMapKeyRef.Optional {
+					t.Errorf("env %q should be optional", key)
+				}
+				break
+			}
+		}
+		if !found {
+			t.Errorf("envoy-proxy container missing env var %q", key)
+		}
+	}
+}
+
+func TestBuildEnvoyProxyContainer_HasExpectedAudienceFromConfigMap(t *testing.T) {
+	builder := NewContainerBuilder(config.CompiledDefaults())
+	container := builder.BuildEnvoyProxyContainerWithSpireOption(true)
+
+	found := false
+	for _, env := range container.Env {
+		if env.Name == "EXPECTED_AUDIENCE" {
+			found = true
+			if env.ValueFrom == nil || env.ValueFrom.ConfigMapKeyRef == nil {
+				t.Error("EXPECTED_AUDIENCE must use ConfigMapKeyRef")
+				break
+			}
+			if env.ValueFrom.ConfigMapKeyRef.Name != "authbridge-config" {
+				t.Errorf("EXPECTED_AUDIENCE ConfigMapKeyRef.Name = %q, want %q",
+					env.ValueFrom.ConfigMapKeyRef.Name, "authbridge-config")
+			}
+			if env.ValueFrom.ConfigMapKeyRef.Optional == nil || !*env.ValueFrom.ConfigMapKeyRef.Optional {
+				t.Error("EXPECTED_AUDIENCE should be optional")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("envoy-proxy container missing EXPECTED_AUDIENCE env var from ConfigMap")
 	}
 }
