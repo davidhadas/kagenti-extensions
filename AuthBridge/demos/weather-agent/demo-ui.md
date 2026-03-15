@@ -50,15 +50,15 @@ token exchange and scope-based access control, see the
 │  │  └───────────────────────────────────────────────────────────────────┘    │   │
 │  └───────────────────────────────────────────────────────────────────────────┘   │
 │                                      │                                           │
-│                     Plain HTTP call  │(no token exchange)                         │
+│                     Plain HTTP call  │(no token exchange)                        │
 │                                      ▼                                           │
 │  ┌───────────────────────────────────────────────────────────────────────────┐   │
 │  │               WEATHER-TOOL POD (namespace: team1)                         │   │
 │  │                                                                           │   │
 │  │  ┌──────────────────────────────────────────────────────────────────┐     │   │
 │  │  │                  weather-tool (port 8000)                        │     │   │
-│  │  │  - MCP server: provides get_weather tool                        │     │   │
-│  │  │  - Calls public weather API (Open-Meteo)                        │     │   │
+│  │  │  - MCP server: provides get_weather tool                         │     │   │
+│  │  │  - Calls public weather API (Open-Meteo)                         │     │   │
 │  │  └──────────────────────────────────────────────────────────────────┘     │   │
 │  └───────────────────────────────────────────────────────────────────────────┘   │
 │                                                                                  │
@@ -71,7 +71,7 @@ token exchange and scope-based access control, see the
 │  │                      │          │                      │                      │
 │  │  Provides SPIFFE     │          │  - kagenti realm     │                      │
 │  │  identities (SVIDs)  │          │  - JWKS for inbound  │                      │
-│  │                      │          │    JWT validation     │                      │
+│  │                      │          │    JWT validation    │                      │
 │  └──────────────────────┘          └──────────────────────┘                      │
 └──────────────────────────────────────────────────────────────────────────────────┘
 ```
