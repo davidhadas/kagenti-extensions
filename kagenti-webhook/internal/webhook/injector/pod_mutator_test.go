@@ -355,5 +355,7 @@ func TestInjectAuthBridge_NilAnnotations(t *testing.T) {
 				return
 			}
 		}
+		t.Fatal("proxy-init container missing OUTBOUND_PORTS_EXCLUDE env var")
 	}
+	t.Fatal("proxy-init container not found in initContainers")
 }

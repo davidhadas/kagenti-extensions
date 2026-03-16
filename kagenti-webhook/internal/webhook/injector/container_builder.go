@@ -463,9 +463,9 @@ const mandatoryOutboundExclude = "8080"
 // kagenti.io/outbound-ports-exclude annotation). The mandatory port 8080
 // is always included.
 func (b *ContainerBuilder) BuildProxyInitContainer(outboundPortsExclude string) corev1.Container {
-	builderLog.Info("building ProxyInit Container", "outboundPortsExclude", outboundPortsExclude)
-
 	excludeValue := buildOutboundExcludeValue(outboundPortsExclude)
+
+	builderLog.Info("building ProxyInit Container", "resolvedOutboundPortsExclude", excludeValue)
 
 	return corev1.Container{
 		Name:            ProxyInitContainerName,
@@ -516,7 +516,7 @@ func buildOutboundExcludeValue(extra string) string {
 		}
 		p, err := strconv.Atoi(tok)
 		if err != nil || p < 1 || p > 65535 {
-			builderLog.Info("ignoring invalid port in outbound-ports-exclude annotation", "value", tok)
+			builderLog.V(0).Info("WARNING: ignoring invalid port in outbound-ports-exclude annotation", "value", tok)
 			continue
 		}
 		normalized := strconv.Itoa(p)
