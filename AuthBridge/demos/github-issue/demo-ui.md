@@ -775,6 +775,13 @@ Inside the test-client pod, get the agent's client credentials (needed to reques
 user tokens that include the agent's audience):
 
 ```bash
+# Helper: decode a JWT payload (base64url → JSON)
+jwt_payload() {
+  local p=$(echo "$1" | cut -d. -f2 | tr '_-' '/+')
+  case $((${#p} % 4)) in 2) p="${p}==" ;; 3) p="${p}=" ;; esac
+  echo "$p" | base64 -d
+}
+
 ADMIN_TOKEN=$(curl -s http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token \
   -d "grant_type=password" \
   -d "client_id=admin-cli" \
@@ -806,7 +813,7 @@ ALICE_TOKEN=$(curl -s -X POST \
   --data-urlencode "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
 
 echo "Alice token length: ${#ALICE_TOKEN}"
-echo "Alice scopes: $(echo $ALICE_TOKEN | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | jq -r '.scope')"
+echo "Alice scopes: $(jwt_payload $ALICE_TOKEN | jq -r '.scope')"
 ```
 
 **Alice queries a public repo** (should succeed):
@@ -870,7 +877,7 @@ BOB_TOKEN=$(curl -s -X POST \
   --data-urlencode "client_secret=$CLIENT_SECRET" | jq -r ".access_token")
 
 echo "Bob token length: ${#BOB_TOKEN}"
-echo "Bob scopes: $(echo $BOB_TOKEN | cut -d. -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | jq -r '.scope')"
+echo "Bob scopes: $(jwt_payload $BOB_TOKEN | jq -r '.scope')"
 ```
 
 **Bob queries the same private repo** (should succeed — PRIVILEGED_ACCESS_PAT has access):
