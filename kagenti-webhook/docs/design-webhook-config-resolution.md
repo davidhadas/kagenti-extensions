@@ -250,10 +250,14 @@ Pod CREATE admission request
 │     │   ├── BuildSpiffeHelper (unchanged)                │
 │     │   └── BuildClientRegistration (literal env vars)   │
 │     │                                                    │
-│     └── VolumeBuilder(resolved, renderedEnvoy)           │
-│         ├── envoy-config (inline rendered YAML)          │
-│         ├── spiffe-helper-config (inline or CM ref)      │
+│     └── VolumeBuilder(resolved)                          │
+│         ├── envoy-config (ConfigMap ref)                 │
+│         ├── spiffe-helper-config (ConfigMap ref)         │
 │         └── shared-data, spire-agent-socket, svid-output │
+│                                                          │
+│     Note: Envoy template rendering (RenderEnvoyConfig)   │
+│     is available but not yet wired into the injection    │
+│     pipeline — volumes reference ConfigMaps by name.     │
 │                                                          │
 │  3. Marshal mutated Pod, return JSON patch               │
 └─────────────────────────────────────────────────────────┘

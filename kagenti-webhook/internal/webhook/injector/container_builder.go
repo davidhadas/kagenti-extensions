@@ -404,6 +404,8 @@ func (b *ContainerBuilder) BuildEnvoyProxyContainerWithSpireOption(spireEnabled 
 // buildEnvoyProxyEnvResolved returns literal env vars from resolved config.
 func (b *ContainerBuilder) buildEnvoyProxyEnvResolved() []corev1.EnvVar {
 	return []corev1.EnvVar{
+		{Name: "KEYCLOAK_URL", Value: b.resolved.KeycloakURL},
+		{Name: "KEYCLOAK_REALM", Value: b.resolved.KeycloakRealm},
 		{Name: "TOKEN_URL", Value: b.resolved.TokenURL},
 		{Name: "ISSUER", Value: b.resolved.Issuer},
 		{Name: "EXPECTED_AUDIENCE", Value: b.resolved.ExpectedAudience},
