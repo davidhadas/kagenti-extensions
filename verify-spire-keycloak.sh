@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Track overall verification status
+VERIFICATION_FAILED=false
+
 # Verification script for SPIRE and Keycloak setup
 echo "=========================================="
 echo "Verifying SPIRE and Keycloak Setup"
@@ -37,20 +40,38 @@ echo "Testing URL: ${JWKS_URL}"
 # Clean up any existing test pod
 kubectl delete pod curl-test 2>/dev/null || true
 
-# Run curl test (without --rm since we delete it manually)
-kubectl run curl-test --restart=Never --image=curlimages/curl:latest -- curl -s "${JWKS_URL}" >/dev/null 2>&1
-sleep 2
-JWKS_OUTPUT=$(kubectl logs curl-test 2>&1 || echo "Failed to get logs")
-kubectl delete pod curl-test 2>/dev/null || true
+# Run curl test with --rm for automatic cleanup
+JWKS_OUTPUT=$(kubectl run curl-test --rm -i --restart=Never --image=curlimages/curl:latest --timeout=30s -- curl -s "${JWKS_URL}" 2>&1)
 
 if echo "${JWKS_OUTPUT}" | grep -q '"use"'; then
     echo "✅ SPIRE JWKS has 'use' field"
+    # Also verify the ConfigMap has set_key_use: true
+    SET_KEY_USE=$(kubectl get configmap spire-spiffe-oidc-discovery-provider -n zero-trust-workload-identity-manager -o json | jq -r '.data["oidc-discovery-provider.conf"]' | jq -r .set_key_use)
+    if [ "$SET_KEY_USE" == "true" ]; then
+        echo "✅ SPIRE ConfigMap has set_key_use: true"
+    else
+        echo "⚠️  Warning: JWKS has 'use' field but ConfigMap set_key_use is not true (current: ${SET_KEY_USE})"
+    fi
 else
     echo "❌ SPIRE JWKS missing 'use' field"
+    echo ""
     echo "JWKS output (first 500 chars):"
     echo "${JWKS_OUTPUT}" | head -c 500
     echo ""
-    echo "This means SPIRE needs to be patched. Check SPIFFE_KEYCLOAK_SETUP.md"
+    echo ""
+    echo "Checking SPIRE ConfigMap..."
+    SET_KEY_USE=$(kubectl get configmap spire-spiffe-oidc-discovery-provider -n zero-trust-workload-identity-manager -o json | jq -r '.data["oidc-discovery-provider.conf"]' | jq -r .set_key_use 2>/dev/null || echo "null")
+    echo "ConfigMap set_key_use value: ${SET_KEY_USE}"
+    echo ""
+    if [ "$SET_KEY_USE" != "true" ]; then
+        echo "❌ CRITICAL: SPIRE needs to be patched with set_key_use: true"
+        echo "   See: LOCAL_TESTING_GUIDE.md → Appendix: Standalone Helm Install"
+        echo "   This will prevent JWT-SVID authentication from working!"
+        VERIFICATION_FAILED=true
+    else
+        echo "⚠️  ConfigMap is correct but OIDC provider may need restart:"
+        echo "   kubectl rollout restart deployment/spire-spiffe-oidc-discovery-provider -n zero-trust-workload-identity-manager"
+    fi
 fi
 echo ""
 
@@ -98,11 +119,22 @@ fi
 echo ""
 
 echo "=========================================="
-echo "✅ Verification Complete"
-echo "=========================================="
-echo ""
-echo "To access Keycloak Admin Console:"
-echo "  1. Open: http://keycloak.localtest.me:8080/admin"
-echo "  2. Switch to the 'kagenti' realm"
-echo "  3. Check Identity Providers → Should see 'spire-spiffe' (Type: SPIFFE)"
-echo ""
+if [ "$VERIFICATION_FAILED" == "true" ]; then
+    echo "❌ Verification FAILED"
+    echo "=========================================="
+    echo ""
+    echo "Critical issues detected! Please fix the errors above before proceeding."
+    echo ""
+    exit 1
+else
+    echo "✅ Verification Complete"
+    echo "=========================================="
+    echo ""
+    echo "All checks passed! Your system is ready for JWT-SVID authentication."
+    echo ""
+    echo "To access Keycloak Admin Console:"
+    echo "  1. Open: http://keycloak.localtest.me:8080/admin"
+    echo "  2. Switch to the 'kagenti' realm"
+    echo "  3. Check Identity Providers → Should see 'spire-spiffe' (Type: SPIFFE)"
+    echo ""
+fi
