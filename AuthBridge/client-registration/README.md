@@ -125,13 +125,19 @@ sequenceDiagram
 |----------|----------|-------------|---------|
 | `SPIRE_ENABLED` | No | Enable SPIFFE ID extraction (default: `false`) | `true` |
 | `CLIENT_NAME` | Yes | Friendly name for the client | `my-service` |
-| `KEYCLOAK_URL` | Yes | Keycloak server URL | `http://keycloak:8080` |
-| `KEYCLOAK_REALM` | Yes | Keycloak realm name | `kagenti` |
+| `KEYCLOAK_URL` | Yes* | Keycloak server URL (auto-derived from `TOKEN_URL` if not provided) | `http://keycloak:8080` |
+| `KEYCLOAK_REALM` | Yes* | Keycloak realm name (auto-derived from `TOKEN_URL` if not provided) | `kagenti` |
+| `TOKEN_URL` | No | Keycloak token endpoint (used to auto-derive `KEYCLOAK_URL` and `KEYCLOAK_REALM`) | `http://keycloak:8080/realms/kagenti/protocol/openid-connect/token` |
 | `KEYCLOAK_ADMIN_USERNAME` | Yes | Admin username | `admin` |
 | `KEYCLOAK_ADMIN_PASSWORD` | Yes | Admin password | `admin` |
 | `KEYCLOAK_TOKEN_EXCHANGE_ENABLED` | No | Enable token exchange for client (default: `true`) | `true` |
 | `KEYCLOAK_CLIENT_REGISTRATION_ENABLED` | No | Enable/disable registration (default: `true`) | `true` |
 | `SECRET_FILE_PATH` | No | Path to write client secret (default: `/shared/secret.txt`) | `/shared/client-secret.txt` |
+
+**Note:** `KEYCLOAK_URL` and `KEYCLOAK_REALM` can be automatically derived from `TOKEN_URL` if not explicitly provided. For example:
+- `TOKEN_URL`: `http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token`
+- Derived `KEYCLOAK_URL`: `http://keycloak-service.keycloak.svc:8080`
+- Derived `KEYCLOAK_REALM`: `kagenti`
 
 ### Created Client Configuration
 
