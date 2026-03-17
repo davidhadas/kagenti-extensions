@@ -10,9 +10,10 @@ metadata:
   namespace: my-agent
 data:
   SPIRE_ENABLED: "false"
-  # Replace these placeholder values with real endpoints
-  KEYCLOAK_URL: "http://keycloak.keycloak.svc:8080"
-  KEYCLOAK_REALM: "master"
+  # TOKEN_URL is used to auto-derive KEYCLOAK_URL and KEYCLOAK_REALM
+  # Replace with your actual Keycloak URL
+  TOKEN_URL: "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token"
+  # Note: Without SPIRE, CLIENT_AUTH_TYPE defaults to "client-secret"
   KEYCLOAK_TOKEN_EXCHANGE_ENABLED: "true"
   KEYCLOAK_CLIENT_REGISTRATION_ENABLED: "true"
 ---
@@ -50,6 +51,8 @@ spec:
         app.kubernetes.io/name: my-app
     spec:
       serviceAccountName: my-service-account
+      securityContext:
+        fsGroup: 1000  # Allow shared volume access between containers
       imagePullSecrets:
         - name: ghcr-secret
       containers:

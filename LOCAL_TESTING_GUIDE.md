@@ -85,38 +85,7 @@ export KIND_EXPERIMENTAL_PROVIDER=podman  # Only needed for Podman
 
 **Note for Podman users:** The script automatically detects Podman and uses tar archives to load images into Kind, since `kind load docker-image` doesn't work with Podman's image store.
 
-## Step 2: Update Hardcoded Image Tags
-
-The webhook's default image tags are hardcoded in [`internal/webhook/config/defaults.go`](kagenti-webhook/internal/webhook/config/defaults.go:12-15). Update them to use `:local`:
-
-```bash
-cd kagenti-extensions/kagenti-webhook
-
-# Replace image tags (these sed commands modify defaults.go in-place)
-sed -i '' 's|envoy-with-processor:latest|envoy-with-processor:local|g' internal/webhook/config/defaults.go
-sed -i '' 's|proxy-init:latest|proxy-init:local|g' internal/webhook/config/defaults.go
-sed -i '' 's|client-registration:latest|client-registration:local|g' internal/webhook/config/defaults.go
-
-# Also update PullPolicy to Never (don't pull from registry)
-sed -i '' 's|PullPolicy:.*corev1.PullIfNotPresent|PullPolicy:         corev1.PullNever|g' internal/webhook/config/defaults.go
-
-# Verify changes
-grep -E "envoy-with-processor|proxy-init|client-registration|PullPolicy" internal/webhook/config/defaults.go
-
-# Rebuild the webhook image with updated tags
-make docker-build IMG=ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:local
-
-# Load into Kind cluster
-# For Docker users:
-kind load docker-image ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:local --name kagenti-dev
-
-# For Podman users (use tar archive method):
-# podman save ghcr.io/kagenti/kagenti-extensions/kagenti-webhook:local -o /tmp/webhook-local.tar
-# kind load image-archive /tmp/webhook-local.tar --name kagenti-dev
-# rm /tmp/webhook-local.tar
-```
-
-## Step 3: Install Kagenti with Ansible
+## Step 2: Install Kagenti with Ansible
 
 **IMPORTANT:** For federated-JWT testing with local images, use the unified `federated-jwt-values.yaml` overlay file from kagenti-extensions.
 
@@ -168,7 +137,7 @@ This installation will:
 - The SPIFFE IdP job should succeed on first attempt (no CrashLoopBackOff)
 - All components should be running and ready
 
-## Step 4: Verify SPIRE and Keycloak
+## Step 3: Verify SPIRE and Keycloak
 
 ```bash
 cd kagenti-extensions
@@ -185,22 +154,29 @@ Expected output:
 - ✅ Keycloak admin secret exists
 - ✅ SPIFFE IdP setup job completed successfully
 
-## Step 5: Test JWT-SVID Generation and Token Exchange
+## Step 4: Test JWT-SVID Generation and Token Exchange
 
 This comprehensive test verifies the complete federated-JWT authentication flow:
 1. **JWT-SVID Generation**: SPIRE issues JWT-SVIDs to workloads
 2. **Token Exchange**: JWT-SVIDs are exchanged for Keycloak access tokens
 3. **Token Validation**: Access tokens contain correct realm and identity claims
 
-### 5.1. Create Test Deployment
+### 4.1. Create Test Deployment
 
-Deploy a pod with spiffe-helper to obtain JWT-SVIDs from SPIRE:
+Deploy a pod with spiffe-helper and client-registration to automatically register with Keycloak:
 
 ```bash
 # Create namespace
 kubectl create namespace agent1
 
-# Deploy test pod with SPIFFE helper
+# Create Keycloak admin secret
+# (Kagenti automatically creates this in agent namespaces listed in agentNamespaces,
+#  but agent1 is a manual test namespace not in that list)
+kubectl create secret generic keycloak-admin-secret -n agent1 \
+  --from-literal=KEYCLOAK_ADMIN_USERNAME=admin \
+  --from-literal=KEYCLOAK_ADMIN_PASSWORD=admin
+
+# Deploy test pod with SPIFFE helper and client registration
 kubectl apply -f - <<'EOF'
 apiVersion: v1
 kind: ConfigMap
@@ -212,7 +188,7 @@ data:
     agent_address = "/spiffe-workload-api/spire-agent.sock"
     cmd = "/bin/sh"
     cmd_args = "-c echo Updated"
-    cert_dir = "/opt/certs"
+    cert_dir = "/opt"
     svid_file_name = "svid.pem"
     svid_key_file_name = "svid_key.pem"
     svid_bundle_file_name = "svid_bundle.pem"
@@ -250,7 +226,50 @@ spec:
           mountPath: /spiffe-workload-api
           readOnly: true
         - name: certs
-          mountPath: /opt/certs
+          mountPath: /opt
+      - name: client-registration
+        image: ghcr.io/kagenti/kagenti-extensions/client-registration:local
+        imagePullPolicy: Never
+        command:
+          - /bin/sh
+          - -c
+          - |
+            while [ ! -f /opt/jwt_svid.token ]; do
+              echo "Waiting for JWT SVID..."
+              sleep 1
+            done
+            echo "JWT SVID found, starting client registration"
+            python client_registration.py
+            echo "Client registration complete, keeping container alive"
+            tail -f /dev/null
+        env:
+          - name: SPIRE_ENABLED
+            value: "true"
+          - name: CLIENT_NAME
+            value: "spiffe-demo"
+          - name: CLIENT_AUTH_TYPE
+            value: "federated-jwt"
+          - name: SPIFFE_IDP_ALIAS
+            value: "spire-spiffe"
+          - name: TOKEN_URL
+            value: "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token"
+          - name: KEYCLOAK_ADMIN_USERNAME
+            valueFrom:
+              secretKeyRef:
+                name: keycloak-admin-secret
+                key: KEYCLOAK_ADMIN_USERNAME
+          - name: KEYCLOAK_ADMIN_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: keycloak-admin-secret
+                key: KEYCLOAK_ADMIN_PASSWORD
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
+        volumeMounts:
+        - name: certs
+          mountPath: /opt
+          readOnly: true
       - name: tools
         image: curlimages/curl
         command: ["sleep", "infinity"]
@@ -259,7 +278,7 @@ spec:
           runAsGroup: 1000
         volumeMounts:
         - name: certs
-          mountPath: /opt/certs
+          mountPath: /opt
           readOnly: true
       volumes:
       - name: spiffe-helper-config
@@ -277,70 +296,51 @@ EOF
 kubectl wait -n agent1 --for=condition=ready pod -l app=spiffe-demo --timeout=120s
 ```
 
-### 5.2. Verify JWT-SVID Generation
+### 4.2. Verify JWT-SVID Generation and Client Registration
 
-Check that spiffe-helper successfully obtained a JWT-SVID from SPIRE:
+Check that spiffe-helper successfully obtained a JWT-SVID and client-registration registered the client:
 
 ```bash
 # Check spiffe-helper logs
 kubectl logs -n agent1 deployment/spiffe-demo -c spiffe-helper | tail -10
 
+# Check client-registration logs
+kubectl logs -n agent1 deployment/spiffe-demo -c client-registration
+
 # Verify JWT-SVID file exists
-kubectl exec -n agent1 deployment/spiffe-demo -c tools -- ls -lh /opt/certs/jwt_svid.token
+kubectl exec -n agent1 deployment/spiffe-demo -c tools -- ls -lh /opt/jwt_svid.token
 
 # Read JWT-SVID (first 100 characters)
-kubectl exec -n agent1 deployment/spiffe-demo -c tools -- sh -c 'head -c 100 /opt/certs/jwt_svid.token && echo "..."'
+kubectl exec -n agent1 deployment/spiffe-demo -c tools -- sh -c 'head -c 100 /opt/jwt_svid.token && echo "..."'
 ```
 
-**Expected output:**
+**Expected output (spiffe-helper):**
 - Logs should show: `Successfully wrote JWT SVID to file`
 - File should exist with read permissions
 - JWT should start with `eyJ...` (base64-encoded JWT header)
+
+**Expected output (client-registration):**
+```
+JWT SVID found, starting client registration
+Extracted SPIFFE ID: spiffe://localtest.me/ns/agent1/sa/default
+Configuring client for JWT-SVID authentication (federated-jwt)
+Created Keycloak client "spiffe://localtest.me/ns/agent1/sa/default": <uuid>
+Client registration complete, keeping container alive
+```
 
 **What the JWT-SVID contains:**
 - **Issuer**: SPIRE OIDC discovery provider
 - **Subject**: `spiffe://localtest.me/ns/agent1/sa/default`
 - **Audience**: `http://keycloak.localtest.me:8080/realms/kagenti`
 
-### 5.3. Create Keycloak Client with Federated-JWT
-
-Register the workload's SPIFFE ID as a Keycloak client configured for JWT-SVID authentication:
-
-```bash
-# Configure kcadm.sh credentials
-kubectl exec -n keycloak keycloak-0 -- sh -c '/opt/keycloak/bin/kcadm.sh config credentials \
-  --server http://localhost:8080 --realm master --user admin --password admin'
-
-# Create client with federated-jwt authenticator
-kubectl exec -n keycloak keycloak-0 -- sh -c '/opt/keycloak/bin/kcadm.sh create clients -r kagenti \
-  -s clientId=spiffe://localtest.me/ns/agent1/sa/default \
-  -s clientAuthenticatorType=federated-jwt \
-  -s serviceAccountsEnabled=true \
-  -s directAccessGrantsEnabled=false \
-  -s standardFlowEnabled=false \
-  -s enabled=true \
-  -s attributes.\"jwt.credential.issuer\"=spire-spiffe \
-  -s attributes.\"jwt.credential.sub\"=spiffe://localtest.me/ns/agent1/sa/default'
-```
-
-**Expected output:**
-```
-Created new client with id '687a8493-4602-4d76-8966-cbba97246b55'
-```
-
-**Key configuration details:**
-- `clientAuthenticatorType: federated-jwt` - Uses JWT-SVID for authentication (NOT client-secret)
-- `jwt.credential.issuer: spire-spiffe` - Must match SPIFFE IdP alias in Keycloak
-- `jwt.credential.sub` - Must match the JWT-SVID's subject claim
-
-### 5.4. Test Token Exchange (JWT-SVID → Access Token)
+### 4.3. Test Token Exchange (JWT-SVID → Access Token)
 
 Exchange the JWT-SVID for a Keycloak access token using the OAuth 2.0 client credentials flow:
 
 ```bash
 # Perform token exchange
 kubectl exec -n agent1 deployment/spiffe-demo -c tools -- sh -c '
-JWT_SVID=$(cat /opt/certs/jwt_svid.token)
+JWT_SVID=$(cat /opt/jwt_svid.token)
 curl -s -X POST \
   -d "grant_type=client_credentials" \
   -d "client_id=spiffe://localtest.me/ns/agent1/sa/default" \
@@ -375,14 +375,14 @@ If you see:
 3. SPIFFE Identity Provider missing in kagenti realm
 4. JWT-SVID issuer doesn't match configured IdP alias
 
-### 5.5. Validate Access Token Claims
+### 4.4. Validate Access Token Claims
 
 Decode and verify the access token contains correct realm and identity information:
 
 ```bash
 # Get access token
 ACCESS_TOKEN=$(kubectl exec -n agent1 deployment/spiffe-demo -c tools -- sh -c '
-JWT_SVID=$(cat /opt/certs/jwt_svid.token)
+JWT_SVID=$(cat /opt/jwt_svid.token)
 curl -s -X POST \
   -d "grant_type=client_credentials" \
   -d "client_id=spiffe://localtest.me/ns/agent1/sa/default" \
@@ -740,7 +740,7 @@ kubectl get configmap kagenti-webhook-config -n <namespace> -o jsonpath='{.data.
 # Expected: federated-jwt
 
 # 2. Deploy an agent and check client-registration logs
-# (After deploying an agent in Step 6)
+# (After deploying an agent in Step 4)
 kubectl logs -n <namespace> deployment/<your-agent> -c kagenti-client-registration -f
 # Expected: "Configuring client for JWT-SVID authentication (federated-jwt)"
 
