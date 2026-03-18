@@ -541,47 +541,60 @@ func (b *ContainerBuilder) buildEnvoyProxyEnvLegacy() []corev1.EnvVar {
 // (port 8080) is never intercepted by Envoy.
 const mandatoryOutboundExclude = "8080"
 
-// BuildProxyInitContainer creates the proxy-init container. The
-// outboundPortsExclude parameter is a comma-separated list of additional
-// ports to exclude from outbound interception (from the
-// kagenti.io/outbound-ports-exclude annotation). The mandatory port 8080
-// is always included.
-func (b *ContainerBuilder) BuildProxyInitContainer(outboundPortsExclude string) corev1.Container {
-	excludeValue := buildOutboundExcludeValue(outboundPortsExclude)
+// BuildProxyInitContainer creates the proxy-init container.
+// outboundPortsExclude is a comma-separated list of additional ports to
+// exclude from outbound interception (mandatory 8080 is always included).
+// inboundPortsExclude is a comma-separated list of ports to exclude from
+// inbound interception (only set when non-empty). Both come from the
+// kagenti.io/outbound-ports-exclude and kagenti.io/inbound-ports-exclude
+// pod annotations.
+func (b *ContainerBuilder) BuildProxyInitContainer(outboundPortsExclude, inboundPortsExclude string) corev1.Container {
+	outboundValue := buildOutboundExcludeValue(outboundPortsExclude)
+	inboundValue := buildPortExcludeValue(inboundPortsExclude, "inbound-ports-exclude")
 
-	builderLog.Info("building ProxyInit Container", "resolvedOutboundPortsExclude", excludeValue)
+	builderLog.Info("building ProxyInit Container",
+		"resolvedOutboundPortsExclude", outboundValue,
+		"resolvedInboundPortsExclude", inboundValue)
+
+	env := []corev1.EnvVar{
+		{
+			Name:  "PROXY_PORT",
+			Value: fmt.Sprintf("%d", b.cfg.Proxy.Port),
+		},
+		{
+			Name:  "INBOUND_PROXY_PORT",
+			Value: fmt.Sprintf("%d", b.cfg.Proxy.InboundProxyPort),
+		},
+		{
+			Name:  "PROXY_UID",
+			Value: fmt.Sprintf("%d", b.cfg.Proxy.UID),
+		},
+		{
+			Name:  "OUTBOUND_PORTS_EXCLUDE",
+			Value: outboundValue,
+		},
+		{
+			Name: "POD_IP",
+			ValueFrom: &corev1.EnvVarSource{
+				FieldRef: &corev1.ObjectFieldSelector{
+					FieldPath: "status.podIP",
+				},
+			},
+		},
+	}
+	if inboundValue != "" {
+		env = append(env, corev1.EnvVar{
+			Name:  "INBOUND_PORTS_EXCLUDE",
+			Value: inboundValue,
+		})
+	}
 
 	return corev1.Container{
 		Name:            ProxyInitContainerName,
 		Image:           b.cfg.Images.ProxyInit,
 		ImagePullPolicy: b.cfg.Images.PullPolicy,
 		Resources:       b.cfg.Resources.ProxyInit,
-		Env: []corev1.EnvVar{
-			{
-				Name:  "PROXY_PORT",
-				Value: fmt.Sprintf("%d", b.cfg.Proxy.Port),
-			},
-			{
-				Name:  "INBOUND_PROXY_PORT",
-				Value: fmt.Sprintf("%d", b.cfg.Proxy.InboundProxyPort),
-			},
-			{
-				Name:  "PROXY_UID",
-				Value: fmt.Sprintf("%d", b.cfg.Proxy.UID),
-			},
-			{
-				Name:  "OUTBOUND_PORTS_EXCLUDE",
-				Value: excludeValue,
-			},
-			{
-				Name: "POD_IP",
-				ValueFrom: &corev1.EnvVarSource{
-					FieldRef: &corev1.ObjectFieldSelector{
-						FieldPath: "status.podIP",
-					},
-				},
-			},
-		},
+		Env:             env,
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:    ptr.To(int64(0)),
 			RunAsNonRoot: ptr.To(false),
@@ -594,25 +607,25 @@ func (b *ContainerBuilder) BuildProxyInitContainer(outboundPortsExclude string) 
 	}
 }
 
-// buildOutboundExcludeValue merges the mandatory 8080 with validated
-// user-supplied ports. Invalid tokens (non-numeric, out of range) are
-// silently dropped and logged. Duplicates of 8080 are removed.
-func buildOutboundExcludeValue(extra string) string {
-	if extra == "" {
-		return mandatoryOutboundExclude
+// validateAndDeduplicatePorts parses a comma-separated port string, validates
+// each token (numeric, 1-65535), deduplicates, and returns the clean list.
+// initialPorts are prepended and excluded from duplicates.
+func validateAndDeduplicatePorts(raw, annotationName string, initialPorts []string) []string {
+	seen := map[string]bool{}
+	ports := make([]string, 0, len(initialPorts)+4)
+	for _, p := range initialPorts {
+		seen[p] = true
+		ports = append(ports, p)
 	}
 
-	seen := map[string]bool{mandatoryOutboundExclude: true}
-	ports := []string{mandatoryOutboundExclude}
-
-	for _, tok := range strings.Split(extra, ",") {
+	for _, tok := range strings.Split(raw, ",") {
 		tok = strings.TrimSpace(tok)
 		if tok == "" {
 			continue
 		}
 		p, err := strconv.Atoi(tok)
 		if err != nil || p < 1 || p > 65535 {
-			builderLog.V(0).Info("WARNING: ignoring invalid port in outbound-ports-exclude annotation", "value", tok)
+			builderLog.V(0).Info("WARNING: ignoring invalid port in "+annotationName+" annotation", "value", tok)
 			continue
 		}
 		normalized := strconv.Itoa(p)
@@ -622,5 +635,25 @@ func buildOutboundExcludeValue(extra string) string {
 		seen[normalized] = true
 		ports = append(ports, normalized)
 	}
-	return strings.Join(ports, ",")
+	return ports
+}
+
+// buildOutboundExcludeValue merges the mandatory 8080 with validated
+// user-supplied ports. Invalid tokens (non-numeric, out of range) are
+// silently dropped and logged. Duplicates of 8080 are removed.
+func buildOutboundExcludeValue(extra string) string {
+	if extra == "" {
+		return mandatoryOutboundExclude
+	}
+	return strings.Join(validateAndDeduplicatePorts(extra, "outbound-ports-exclude", []string{mandatoryOutboundExclude}), ",")
+}
+
+// buildPortExcludeValue validates and deduplicates a comma-separated port
+// list. Returns "" when the input is empty. Used for inbound port exclusion
+// where there is no mandatory port.
+func buildPortExcludeValue(raw, annotationName string) string {
+	if raw == "" {
+		return ""
+	}
+	return strings.Join(validateAndDeduplicatePorts(raw, annotationName, nil), ",")
 }

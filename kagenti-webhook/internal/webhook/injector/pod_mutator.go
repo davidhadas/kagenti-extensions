@@ -59,9 +59,10 @@ const (
 	AmbientRedirectionAnnotation = "ambient.istio.io/redirection"
 
 	// Port exclusion annotations — per-workload iptables overrides.
-	// Values are comma-separated port numbers appended to the mandatory
-	// outbound exclusion (8080). Example: "11434,4317"
+	// Values are comma-separated port numbers. Outbound values are appended
+	// to the mandatory exclusion (8080). Example: "11434,4317"
 	OutboundPortsExcludeAnnotation = "kagenti.io/outbound-ports-exclude"
+	InboundPortsExcludeAnnotation  = "kagenti.io/inbound-ports-exclude"
 
 	// KagentiTypeLabel is the label key that identifies the workload type
 	KagentiTypeLabel = "kagenti.io/type"
@@ -243,7 +244,8 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 
 	if decision.ProxyInit.Inject && !containerExists(podSpec.InitContainers, ProxyInitContainerName) {
 		outboundExclude := annotations[OutboundPortsExcludeAnnotation]
-		podSpec.InitContainers = append(podSpec.InitContainers, builder.BuildProxyInitContainer(outboundExclude))
+		inboundExclude := annotations[InboundPortsExcludeAnnotation]
+		podSpec.InitContainers = append(podSpec.InitContainers, builder.BuildProxyInitContainer(outboundExclude, inboundExclude))
 	}
 
 	if decision.SpiffeHelper.Inject && !containerExists(podSpec.Containers, SpiffeHelperContainerName) {

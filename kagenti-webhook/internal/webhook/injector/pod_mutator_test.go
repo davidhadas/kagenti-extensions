@@ -326,6 +326,57 @@ func TestInjectAuthBridge_OutboundPortsExcludeAnnotation(t *testing.T) {
 	t.Fatal("proxy-init container not found in initContainers")
 }
 
+func TestInjectAuthBridge_InboundPortsExcludeAnnotation(t *testing.T) {
+	m := newTestMutator()
+	ctx := context.Background()
+
+	podSpec := &corev1.PodSpec{}
+	labels := map[string]string{
+		KagentiTypeLabel: KagentiTypeAgent,
+	}
+	annotations := map[string]string{
+		OutboundPortsExcludeAnnotation: "11434",
+		InboundPortsExcludeAnnotation:  "8443,18789",
+	}
+
+	injected, err := m.InjectAuthBridge(ctx, podSpec, "test-ns", "my-agent", labels, annotations)
+	if err != nil {
+		t.Fatalf("InjectAuthBridge() returned error: %v", err)
+	}
+	if !injected {
+		t.Fatal("expected InjectAuthBridge to return true")
+	}
+
+	for _, ic := range podSpec.InitContainers {
+		if ic.Name != ProxyInitContainerName {
+			continue
+		}
+		var foundOutbound, foundInbound bool
+		for _, env := range ic.Env {
+			if env.Name == "OUTBOUND_PORTS_EXCLUDE" {
+				foundOutbound = true
+				if env.Value != "8080,11434" {
+					t.Errorf("OUTBOUND_PORTS_EXCLUDE = %q, want %q", env.Value, "8080,11434")
+				}
+			}
+			if env.Name == "INBOUND_PORTS_EXCLUDE" {
+				foundInbound = true
+				if env.Value != "8443,18789" {
+					t.Errorf("INBOUND_PORTS_EXCLUDE = %q, want %q", env.Value, "8443,18789")
+				}
+			}
+		}
+		if !foundOutbound {
+			t.Fatal("proxy-init container missing OUTBOUND_PORTS_EXCLUDE env var")
+		}
+		if !foundInbound {
+			t.Fatal("proxy-init container missing INBOUND_PORTS_EXCLUDE env var")
+		}
+		return
+	}
+	t.Fatal("proxy-init container not found in initContainers")
+}
+
 func TestInjectAuthBridge_NilAnnotations(t *testing.T) {
 	m := newTestMutator()
 	ctx := context.Background()

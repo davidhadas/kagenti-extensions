@@ -321,32 +321,118 @@ func TestBuildOutboundExcludeValue_BoundaryPorts(t *testing.T) {
 
 func TestBuildProxyInitContainer_DefaultExclude(t *testing.T) {
 	builder := NewContainerBuilder(config.CompiledDefaults())
-	container := builder.BuildProxyInitContainer("")
+	container := builder.BuildProxyInitContainer("", "")
 
+	var foundOutbound bool
 	for _, env := range container.Env {
 		if env.Name == "OUTBOUND_PORTS_EXCLUDE" {
+			foundOutbound = true
 			if env.Value != "8080" {
 				t.Errorf("OUTBOUND_PORTS_EXCLUDE = %q, want %q", env.Value, "8080")
 			}
-			return
+		}
+		if env.Name == "INBOUND_PORTS_EXCLUDE" {
+			t.Error("INBOUND_PORTS_EXCLUDE should not be set when inbound exclude is empty")
 		}
 	}
-	t.Error("proxy-init container missing OUTBOUND_PORTS_EXCLUDE env var")
+	if !foundOutbound {
+		t.Error("proxy-init container missing OUTBOUND_PORTS_EXCLUDE env var")
+	}
 }
 
 func TestBuildProxyInitContainer_WithAnnotationPorts(t *testing.T) {
 	builder := NewContainerBuilder(config.CompiledDefaults())
-	container := builder.BuildProxyInitContainer("11434,4317")
+	container := builder.BuildProxyInitContainer("11434,4317", "")
 
+	var foundOutbound bool
 	for _, env := range container.Env {
 		if env.Name == "OUTBOUND_PORTS_EXCLUDE" {
+			foundOutbound = true
 			if env.Value != "8080,11434,4317" {
 				t.Errorf("OUTBOUND_PORTS_EXCLUDE = %q, want %q", env.Value, "8080,11434,4317")
 			}
-			return
+		}
+		if env.Name == "INBOUND_PORTS_EXCLUDE" {
+			t.Error("INBOUND_PORTS_EXCLUDE should not be set when inbound exclude is empty")
 		}
 	}
-	t.Error("proxy-init container missing OUTBOUND_PORTS_EXCLUDE env var")
+	if !foundOutbound {
+		t.Error("proxy-init container missing OUTBOUND_PORTS_EXCLUDE env var")
+	}
+}
+
+func TestBuildProxyInitContainer_WithInboundExclude(t *testing.T) {
+	builder := NewContainerBuilder(config.CompiledDefaults())
+	container := builder.BuildProxyInitContainer("", "8443,18789")
+
+	var foundInbound bool
+	for _, env := range container.Env {
+		if env.Name == "OUTBOUND_PORTS_EXCLUDE" && env.Value != "8080" {
+			t.Errorf("OUTBOUND_PORTS_EXCLUDE = %q, want %q", env.Value, "8080")
+		}
+		if env.Name == "INBOUND_PORTS_EXCLUDE" {
+			foundInbound = true
+			if env.Value != "8443,18789" {
+				t.Errorf("INBOUND_PORTS_EXCLUDE = %q, want %q", env.Value, "8443,18789")
+			}
+		}
+	}
+	if !foundInbound {
+		t.Error("proxy-init container missing INBOUND_PORTS_EXCLUDE env var")
+	}
+}
+
+func TestBuildProxyInitContainer_WithBothExcludes(t *testing.T) {
+	builder := NewContainerBuilder(config.CompiledDefaults())
+	container := builder.BuildProxyInitContainer("11434", "8443")
+
+	var foundOutbound, foundInbound bool
+	for _, env := range container.Env {
+		if env.Name == "OUTBOUND_PORTS_EXCLUDE" {
+			foundOutbound = true
+			if env.Value != "8080,11434" {
+				t.Errorf("OUTBOUND_PORTS_EXCLUDE = %q, want %q", env.Value, "8080,11434")
+			}
+		}
+		if env.Name == "INBOUND_PORTS_EXCLUDE" {
+			foundInbound = true
+			if env.Value != "8443" {
+				t.Errorf("INBOUND_PORTS_EXCLUDE = %q, want %q", env.Value, "8443")
+			}
+		}
+	}
+	if !foundOutbound {
+		t.Error("missing OUTBOUND_PORTS_EXCLUDE")
+	}
+	if !foundInbound {
+		t.Error("missing INBOUND_PORTS_EXCLUDE")
+	}
+}
+
+func TestBuildPortExcludeValue(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"empty", "", ""},
+		{"single port", "8443", "8443"},
+		{"multiple ports", "8443,18789", "8443,18789"},
+		{"whitespace", " 8443 , 18789 ", "8443,18789"},
+		{"duplicates", "8443,8443,18789", "8443,18789"},
+		{"invalid tokens", "8443,abc,18789", "8443,18789"},
+		{"out of range", "0,8443,99999", "8443"},
+		{"all invalid", "abc,0,99999", ""},
+		{"empty segments", "8443,,18789", "8443,18789"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildPortExcludeValue(tt.input, "test-annotation")
+			if got != tt.want {
+				t.Errorf("buildPortExcludeValue(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestBuildEnvoyProxyContainer_HasExpectedAudienceFromConfigMap(t *testing.T) {
