@@ -446,7 +446,7 @@ model is pulled (`ollama pull ibm/granite4:latest`).
 #### Ollama Port Exclusion
 
 AuthBridge's `proxy-init` init container redirects traffic through Envoy. By
-default only port 8080 (Keycloak) is excluded. Ollama traffic on port 11434
+default, only port 8080 (Keycloak) is excluded. Ollama traffic on port 11434
 gets intercepted, which corrupts LLM streaming responses.
 
 **Fix:** Add the `kagenti.io/outbound-ports-exclude` annotation to the
