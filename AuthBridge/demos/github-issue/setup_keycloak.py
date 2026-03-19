@@ -47,8 +47,9 @@ Security Note:
 """
 
 import argparse
-import sys
 import os
+import sys
+
 from keycloak import KeycloakAdmin, KeycloakPostError
 
 # Default configuration
@@ -100,13 +101,13 @@ def get_or_create_realm(keycloak_admin, realm_name):
             if realm["realm"] == realm_name:
                 print(f"Realm '{realm_name}' already exists.")
                 return
-        keycloak_admin.create_realm(
-            {"realm": realm_name, "enabled": True, "displayName": realm_name}
-        )
+        keycloak_admin.create_realm({"realm": realm_name, "enabled": True, "displayName": realm_name})
         print(f"Created realm '{realm_name}'.")
     except Exception as e:
         print(f"Error checking/creating realm: {e}", file=sys.stderr)
         raise
+
+
 def get_or_create_client(keycloak_admin, client_payload):
     client_id = client_payload["clientId"]
     existing_client_id = keycloak_admin.get_client_id(client_id)
@@ -151,9 +152,7 @@ def add_audience_mapper(keycloak_admin, scope_id, mapper_name, audience):
         keycloak_admin.add_mapper_to_client_scope(scope_id, mapper_payload)
         print(f"Added audience mapper '{mapper_name}' for audience '{audience}'")
     except Exception as e:
-        print(
-            f"Note: Could not add mapper '{mapper_name}' (might already exist): {e}"
-        )
+        print(f"Note: Could not add mapper '{mapper_name}' (might already exist): {e}")
 
 
 def get_or_create_user(keycloak_admin, user_config):
@@ -192,9 +191,7 @@ def get_or_create_user(keycloak_admin, user_config):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Setup Keycloak for GitHub Issue Agent + AuthBridge demo"
-    )
+    parser = argparse.ArgumentParser(description="Setup Keycloak for GitHub Issue Agent + AuthBridge demo")
     parser.add_argument(
         "--namespace",
         "-n",
@@ -235,9 +232,7 @@ def main():
         print("\nMake sure Keycloak is running and accessible at:")
         print(f"  {KEYCLOAK_URL}")
         print("\nIf using port-forward, run:")
-        print(
-            "  kubectl port-forward service/keycloak-service -n keycloak 8080:8080"
-        )
+        print("  kubectl port-forward service/keycloak-service -n keycloak 8080:8080")
         sys.exit(1)
 
     # Create realm
@@ -290,9 +285,7 @@ def main():
             },
         },
     )
-    add_audience_mapper(
-        keycloak_admin, agent_spiffe_scope_id, scope_name, agent_spiffe_id
-    )
+    add_audience_mapper(keycloak_admin, agent_spiffe_scope_id, scope_name, agent_spiffe_id)
 
     # 2. github-tool-aud scope: adds "github-tool" to exchanged tokens (optional)
     print("\nCreating scope for github-tool audience...")
@@ -307,9 +300,7 @@ def main():
             },
         },
     )
-    add_audience_mapper(
-        keycloak_admin, github_tool_scope_id, "github-tool-aud", "github-tool"
-    )
+    add_audience_mapper(keycloak_admin, github_tool_scope_id, "github-tool-aud", "github-tool")
 
     # 3. github-full-access scope: optional scope for privileged access
     print("\nCreating scope for privileged GitHub access...")
@@ -368,12 +359,8 @@ def main():
     ui_client_internal_id = keycloak_admin.get_client_id(UI_CLIENT_ID)
     if ui_client_internal_id:
         try:
-            keycloak_admin.add_client_default_client_scope(
-                ui_client_internal_id, agent_spiffe_scope_id, {}
-            )
-            print(
-                f"Added '{scope_name}' as default scope on client '{UI_CLIENT_ID}'."
-            )
+            keycloak_admin.add_client_default_client_scope(ui_client_internal_id, agent_spiffe_scope_id, {})
+            print(f"Added '{scope_name}' as default scope on client '{UI_CLIENT_ID}'.")
             print("  → UI tokens will now include the agent's SPIFFE ID in audience.")
             print("  → Users must log out and back in for the new scope to take effect.")
         except Exception as e:
@@ -394,18 +381,14 @@ def main():
     # optional scopes added after client creation won't be inherited.
     # Explicitly add the scopes so client_credentials grants with
     # scope=github-tool-aud+github-full-access succeed.
-    print(f"\n--- Adding scopes to agent client (if registered) ---")
+    print("\n--- Adding scopes to agent client (if registered) ---")
     agent_internal_id = keycloak_admin.get_client_id(agent_spiffe_id)
     if agent_internal_id:
         # Add the agent's own audience scope as a default so tokens issued
         # via client_credentials include the agent's SPIFFE ID in `aud`.
         try:
-            keycloak_admin.add_client_default_client_scope(
-                agent_internal_id, agent_spiffe_scope_id, {}
-            )
-            print(
-                f"Added '{scope_name}' as default scope on agent client."
-            )
+            keycloak_admin.add_client_default_client_scope(agent_internal_id, agent_spiffe_scope_id, {})
+            print(f"Added '{scope_name}' as default scope on agent client.")
             print("  → client_credentials tokens will include the agent's SPIFFE ID in aud.")
         except Exception as e:
             print(f"Note: Could not add '{scope_name}' to agent client: {e}")
@@ -417,16 +400,10 @@ def main():
             ("github-full-access", github_full_access_scope_id),
         ]:
             try:
-                keycloak_admin.add_client_optional_client_scope(
-                    agent_internal_id, exchange_scope_id, {}
-                )
-                print(
-                    f"Added '{exchange_scope_name}' as optional scope on agent client."
-                )
+                keycloak_admin.add_client_optional_client_scope(agent_internal_id, exchange_scope_id, {})
+                print(f"Added '{exchange_scope_name}' as optional scope on agent client.")
             except Exception as e:
-                print(
-                    f"Note: Could not add '{exchange_scope_name}' to agent client: {e}"
-                )
+                print(f"Note: Could not add '{exchange_scope_name}' to agent client: {e}")
     else:
         print(
             f"Agent client '{agent_spiffe_id}' not yet registered.\n"
@@ -436,12 +413,31 @@ def main():
         )
 
     # ---------------------------------------------------------------
-    # Create demo users
+    # Create demo users and assign the admin realm role
     # ---------------------------------------------------------------
     print("\n--- Creating demo users ---")
     for user in DEMO_USERS:
         print(f"\n  {user['username']}: {user['description']}")
         get_or_create_user(keycloak_admin, user)
+
+    # The Kagenti backend uses the "admin" realm role for RBAC. Without
+    # it, users can log in but see no agents or tools in the UI.
+    print("\n--- Assigning 'admin' realm role to demo users ---")
+    admin_role = keycloak_admin.get_realm_role("admin")
+    if admin_role:
+        for user in DEMO_USERS:
+            user_id = keycloak_admin.get_user_id(user["username"])
+            try:
+                keycloak_admin.assign_realm_roles(user_id, [admin_role])
+                print(f"Assigned 'admin' role to '{user['username']}'.")
+            except Exception as e:
+                print(f"Note: Could not assign 'admin' role to '{user['username']}' (might already have it): {e}")
+    else:
+        print(
+            "Warning: 'admin' realm role not found. Demo users will not "
+            "be able to see agents/tools in the UI. Ensure the Kagenti "
+            "platform is installed before running this script."
+        )
 
     # ---------------------------------------------------------------
     # Summary
@@ -459,7 +455,7 @@ Created:
   Scopes:   {scope_name} (realm DEFAULT - auto-adds Agent's SPIFFE ID to aud)
             github-tool-aud (realm OPTIONAL - for exchanged tokens)
             github-full-access (realm OPTIONAL - for privileged access)
-  Users:    alice (public access), bob (privileged access)
+  Users:    alice (public access), bob (privileged access) — both with admin role
 
 Scope model:
   github-full-access is OPTIONAL — it must be explicitly requested in the
