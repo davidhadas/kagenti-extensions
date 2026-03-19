@@ -50,7 +50,7 @@ import argparse
 import os
 import sys
 
-from keycloak import KeycloakAdmin, KeycloakPostError
+from keycloak import KeycloakAdmin, KeycloakGetError, KeycloakPostError
 
 # Default configuration
 KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL", "http://keycloak.localtest.me:8080")
@@ -423,7 +423,10 @@ def main():
     # The Kagenti backend uses the "admin" realm role for RBAC. Without
     # it, users can log in but see no agents or tools in the UI.
     print("\n--- Assigning 'admin' realm role to demo users ---")
-    admin_role = keycloak_admin.get_realm_role("admin")
+    try:
+        admin_role = keycloak_admin.get_realm_role("admin")
+    except KeycloakGetError:
+        admin_role = None
     if admin_role:
         for user in DEMO_USERS:
             user_id = keycloak_admin.get_user_id(user["username"])
