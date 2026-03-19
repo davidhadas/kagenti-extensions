@@ -494,7 +494,7 @@ OPENAI_API_KEY=sk-...
 3. Under **Available Agents**, select `git-issue-agent` and click **View Details**.
 4. Verify the **Agent Card** is visible (this confirms the agent is running and
    the `/.well-known/*` bypass is working).
-5. Use the **Chat** panel to send a message, e.g. "List issues in kagenti/kagenti repo".
+5. Use the **Chat** panel to send a message, e.g. "List 10 open issues in kagenti/kagenti repo".
 6. The agent should respond with a list of GitHub issues.
 
 > **Troubleshooting:** If UI chat returns a `401`, verify that both the UI and
@@ -610,7 +610,7 @@ curl -s --max-time 300 \
       "message": {
         "role": "user",
         "messageId": "msg-001",
-        "parts": [{"type": "text", "text": "List issues in kagenti/kagenti repo"}]
+        "parts": [{"type": "text", "text": "List 10 open issues in kagenti/kagenti repo"}]
       }
     }
   }' | jq
@@ -773,7 +773,7 @@ curl -s --max-time 300 \
       "message": {
         "role": "user",
         "messageId": "msg-alice-1",
-        "parts": [{"type": "text", "text": "List issues in kagenti/kagenti repo"}]
+        "parts": [{"type": "text", "text": "List 10 open issues in kagenti/kagenti repo"}]
       }
     }
   }' | jq '.result.artifacts[0].parts[0].text' | head -5
