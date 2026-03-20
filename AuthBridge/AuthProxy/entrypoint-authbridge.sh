@@ -11,6 +11,13 @@ set -eu
 #   4. envoy (exec, foreground) -- inbound JWT validation works immediately
 #
 # Runs as UID 1337 (Envoy UID, excluded from iptables redirect).
+#
+# Process management: Envoy (PID 1 via exec) is the liveness-critical process.
+# Background subprocesses (spiffe-helper, go-processor) are expected to be
+# long-running but their failures are not monitored here — Kubernetes liveness
+# probes on the Envoy admin port detect the overall container health.
+# Client-registration failures are non-fatal (go-processor handles missing
+# credentials gracefully via passthrough mode).
 
 # --- Phase 1: Start spiffe-helper (if enabled) ---
 if [ "${SPIRE_ENABLED}" = "true" ]; then
@@ -34,10 +41,17 @@ sleep 2
     while [ ! -f /opt/jwt_svid.token ]; do sleep 1; done
     echo "[AuthBridge] SPIFFE credentials ready"
 
-    # Extract client ID from JWT SVID payload
-    JWT_PAYLOAD=$(cat /opt/jwt_svid.token | cut -d'.' -f2)
+    # Extract client ID from JWT SVID payload.
+    # Each step is validated individually to avoid silent failures in the pipeline.
+    JWT_PAYLOAD=$(cut -d'.' -f2 < /opt/jwt_svid.token)
+    if [ -z "$JWT_PAYLOAD" ]; then
+      echo "[AuthBridge] ERROR: Failed to extract JWT payload from SVID" >&2
+    fi
     CLIENT_ID=$(echo "${JWT_PAYLOAD}==" | base64 -d 2>/dev/null | \
       python3 -c "import sys,json; print(json.load(sys.stdin).get('sub',''))")
+    if [ -z "$CLIENT_ID" ]; then
+      echo "[AuthBridge] ERROR: Failed to decode client ID from JWT SVID" >&2
+    fi
     echo "$CLIENT_ID" > /shared/client-id.txt
     echo "[AuthBridge] Client ID (SPIFFE ID): $CLIENT_ID"
   else

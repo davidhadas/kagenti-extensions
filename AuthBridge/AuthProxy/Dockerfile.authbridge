@@ -4,7 +4,7 @@
 # Build context: ./AuthBridge (needs access to both AuthProxy/ and client-registration/)
 
 # Stage 1: Build go-processor
-FROM golang:1.26-alpine AS go-builder
+FROM golang:1.26.1-alpine AS go-builder
 
 WORKDIR /app
 
