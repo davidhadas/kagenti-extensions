@@ -39,6 +39,12 @@ const (
 	// Keep in sync with AuthBridge/client-registration/Dockerfile
 	ClientRegistrationUID = 1000
 	ClientRegistrationGID = 1000
+
+	// FSGroup for shared volume access in SPIRE mode.
+	// Sets group ownership of emptyDir volumes (like svid-output) to enable
+	// multiple containers with different UIDs to read/write shared files.
+	// All sidecar containers get this as a supplemental group ID.
+	SharedVolumesFSGroup = 1000
 )
 
 // ContainerBuilder creates container specs from resolved config.
@@ -253,6 +259,9 @@ func (b *ContainerBuilder) buildClientRegistrationEnvResolved(clientName string,
 		{Name: "CLIENT_NAME", Value: clientName},
 		{Name: "SECRET_FILE_PATH", Value: "/shared/client-secret.txt"},
 		{Name: "PLATFORM_CLIENT_IDS", Value: b.resolved.PlatformClientIDs},
+		{Name: "CLIENT_AUTH_TYPE", Value: b.resolved.ClientAuthType},
+		{Name: "SPIFFE_IDP_ALIAS", Value: b.resolved.SpiffeIdpAlias},
+		{Name: "JWT_AUDIENCE", Value: b.resolved.JWTAudience},
 	}
 }
 
@@ -314,6 +323,36 @@ func (b *ContainerBuilder) buildClientRegistrationEnvLegacy(clientName string, s
 				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: AuthBridgeConfigMapName},
 					Key:                  "PLATFORM_CLIENT_IDS",
+					Optional:             ptr.To(true),
+				},
+			},
+		},
+		{
+			Name: "CLIENT_AUTH_TYPE",
+			ValueFrom: &corev1.EnvVarSource{
+				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: AuthBridgeConfigMapName},
+					Key:                  "CLIENT_AUTH_TYPE",
+					Optional:             ptr.To(true),
+				},
+			},
+		},
+		{
+			Name: "SPIFFE_IDP_ALIAS",
+			ValueFrom: &corev1.EnvVarSource{
+				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: AuthBridgeConfigMapName},
+					Key:                  "SPIFFE_IDP_ALIAS",
+					Optional:             ptr.To(true),
+				},
+			},
+		},
+		{
+			Name: "JWT_AUDIENCE",
+			ValueFrom: &corev1.EnvVarSource{
+				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: AuthBridgeConfigMapName},
+					Key:                  "JWT_AUDIENCE",
 					Optional:             ptr.To(true),
 				},
 			},

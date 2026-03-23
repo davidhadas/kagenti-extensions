@@ -48,6 +48,9 @@ type NamespaceConfig struct {
 	TargetAudience        string
 	TargetScopes          string
 	DefaultOutboundPolicy string
+	ClientAuthType        string // "client-secret" or "federated-jwt"
+	SpiffeIdpAlias        string // Keycloak SPIFFE Identity Provider alias (e.g., "spire-spiffe")
+	JWTAudience           string // JWT audience for SPIFFE authentication
 
 	// From "spiffe-helper-config" ConfigMap
 	SpiffeHelperConf string // raw helper.conf content
@@ -79,6 +82,9 @@ func ReadNamespaceConfig(ctx context.Context, c client.Reader, namespace string)
 		cfg.TargetAudience = cm.Data["TARGET_AUDIENCE"]
 		cfg.TargetScopes = cm.Data["TARGET_SCOPES"]
 		cfg.DefaultOutboundPolicy = cm.Data["DEFAULT_OUTBOUND_POLICY"]
+		cfg.ClientAuthType = cm.Data["CLIENT_AUTH_TYPE"]
+		cfg.SpiffeIdpAlias = cm.Data["SPIFFE_IDP_ALIAS"]
+		cfg.JWTAudience = cm.Data["JWT_AUDIENCE"]
 	}
 
 	// Note: keycloak-admin-secret is not read here. The resolved container builder

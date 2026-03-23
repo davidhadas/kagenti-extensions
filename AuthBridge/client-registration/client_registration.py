@@ -15,6 +15,7 @@ Idempotent:
 """
 
 import os
+import re
 from typing import Any
 import jwt
 from keycloak import KeycloakAdmin, KeycloakPostError
@@ -31,6 +32,23 @@ def get_env_var(name: str, default: str | None = None) -> str:
     if default is not None:
         return default
     raise ValueError(f"Missing required environment variable: {name}")
+
+
+def derive_keycloak_config_from_token_url(token_url: str) -> tuple[str | None, str | None]:
+    """
+    Derive KEYCLOAK_URL and KEYCLOAK_REALM from TOKEN_URL.
+
+    Example:
+        TOKEN_URL: http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token
+        Returns: ("http://keycloak-service.keycloak.svc:8080", "kagenti")
+
+    Returns (None, None) if parsing fails.
+    """
+    # Pattern: <base_url>/realms/<realm>/protocol/openid-connect/token
+    match = re.match(r'^(https?://[^/]+)/realms/([^/]+)/', token_url)
+    if match:
+        return match.group(1), match.group(2)
+    return None, None
 
 
 def write_client_secret(
@@ -214,14 +232,32 @@ if get_env_var("SPIRE_ENABLED", "false").lower() == "true":
 else:
     client_id = client_name
 
+# Try to derive KEYCLOAK_URL and KEYCLOAK_REALM from TOKEN_URL if not directly provided
+# This provides backwards compatibility and reduces configuration duplication
+TOKEN_URL = os.environ.get("TOKEN_URL")
+DERIVED_KEYCLOAK_URL = None
+DERIVED_KEYCLOAK_REALM = None
+if TOKEN_URL:
+    DERIVED_KEYCLOAK_URL, DERIVED_KEYCLOAK_REALM = derive_keycloak_config_from_token_url(TOKEN_URL)
+    if DERIVED_KEYCLOAK_URL:
+        print(f"Derived KEYCLOAK_URL from TOKEN_URL: {DERIVED_KEYCLOAK_URL}")
+    if DERIVED_KEYCLOAK_REALM:
+        print(f"Derived KEYCLOAK_REALM from TOKEN_URL: {DERIVED_KEYCLOAK_REALM}")
+
 try:
-    KEYCLOAK_URL = get_env_var("KEYCLOAK_URL")
+    # Try explicit env var first, then fall back to derived value from TOKEN_URL
+    KEYCLOAK_URL = get_env_var("KEYCLOAK_URL", DERIVED_KEYCLOAK_URL)
+    KEYCLOAK_REALM = get_env_var("KEYCLOAK_REALM", DERIVED_KEYCLOAK_REALM)
     KEYCLOAK_TOKEN_EXCHANGE_ENABLED = (
         get_env_var("KEYCLOAK_TOKEN_EXCHANGE_ENABLED", "true").lower() == "true"
     )
     KEYCLOAK_CLIENT_REGISTRATION_ENABLED = (
         get_env_var("KEYCLOAK_CLIENT_REGISTRATION_ENABLED", "true").lower() == "true"
     )
+    # CLIENT_AUTH_TYPE controls how the client authenticates to Keycloak:
+    # - "client-secret": Traditional client_secret authentication (default)
+    # - "federated-jwt": JWT-SVID authentication via SPIFFE identity provider
+    CLIENT_AUTH_TYPE = get_env_var("CLIENT_AUTH_TYPE", "client-secret")
 except ValueError as e:
     print(
         f"Expected environment variable missing. Skipping client registration of {client_id}."
@@ -239,32 +275,50 @@ keycloak_admin = KeycloakAdmin(
     server_url=KEYCLOAK_URL,
     username=get_env_var("KEYCLOAK_ADMIN_USERNAME"),
     password=get_env_var("KEYCLOAK_ADMIN_PASSWORD"),
-    realm_name=get_env_var("KEYCLOAK_REALM"),
+    realm_name=KEYCLOAK_REALM,
     user_realm_name="master",
 )
+
+# Build client payload based on authentication type
+client_payload = {
+    "name": client_name,
+    "clientId": client_id,
+    "standardFlowEnabled": True,
+    "directAccessGrantsEnabled": True,
+    "serviceAccountsEnabled": True,  # Required for client_credentials grant
+    "fullScopeAllowed": False,
+    "publicClient": False,  # Enable client authentication
+    # Enable token exchange for this client.
+    # Token exchange allows this client to exchange tokens for other tokens, potentially across different clients.
+    # Use case: [EXPLAIN THE SPECIFIC USE CASE HERE, e.g., "Required for service-to-service authentication in microservices architecture."]
+    # Security considerations: Ensure only trusted clients have this capability, restrict scopes and permissions as needed,
+    # and audit usage to prevent privilege escalation or unauthorized access.
+    "attributes": {
+        "standard.token.exchange.enabled": str(
+            KEYCLOAK_TOKEN_EXCHANGE_ENABLED
+        ).lower(),  # Enable token exchange
+    },
+}
+
+# Configure client authentication type
+if CLIENT_AUTH_TYPE == "federated-jwt":
+    print(f"Configuring client for JWT-SVID authentication (federated-jwt)")
+    client_payload["clientAuthenticatorType"] = "federated-jwt"
+    # Add federated JWT attributes for SPIFFE authentication
+    # These tell Keycloak to validate JWT-SVIDs from the SPIFFE identity provider
+    spiffe_idp_alias = get_env_var("SPIFFE_IDP_ALIAS", "spire-spiffe")
+    client_payload["attributes"].update({
+        "jwt.credential.issuer": spiffe_idp_alias,
+        "jwt.credential.sub": client_id,  # Must match JWT sub claim (SPIFFE ID)
+    })
+else:
+    print(f"Configuring client for client-secret authentication")
+    client_payload["clientAuthenticatorType"] = "client-secret"
 
 internal_client_id = register_client(
     keycloak_admin,
     client_id,
-    {
-        "name": client_name,
-        "clientId": client_id,
-        "standardFlowEnabled": True,
-        "directAccessGrantsEnabled": True,
-        "serviceAccountsEnabled": True,  # Required for client_credentials grant
-        "fullScopeAllowed": False,
-        "publicClient": False,  # Enable client authentication
-        # Enable token exchange for this client.
-        # Token exchange allows this client to exchange tokens for other tokens, potentially across different clients.
-        # Use case: [EXPLAIN THE SPECIFIC USE CASE HERE, e.g., "Required for service-to-service authentication in microservices architecture."]
-        # Security considerations: Ensure only trusted clients have this capability, restrict scopes and permissions as needed,
-        # and audit usage to prevent privilege escalation or unauthorized access.
-        "attributes": {
-            "standard.token.exchange.enabled": str(
-                KEYCLOAK_TOKEN_EXCHANGE_ENABLED
-            ).lower(),  # Enable token exchange
-        },
-    },
+    client_payload,
 )
 
 try:

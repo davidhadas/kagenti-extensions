@@ -360,7 +360,7 @@ func TestExchangeTokenWithActorToken(t *testing.T) {
 	defer server.Close()
 
 	// Test with actor token present
-	token, err := exchangeToken("cid", "csecret", server.URL, "subject-tok", "aud", "openid", "actor-tok")
+	token, err := exchangeToken("cid", "csecret", server.URL, "subject-tok", "aud", "openid", false, "", "actor-tok")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestExchangeTokenWithoutActorToken(t *testing.T) {
 	defer server.Close()
 
 	// Test with empty actor token
-	token, err := exchangeToken("cid", "csecret", server.URL, "subject-tok", "aud", "openid", "")
+	token, err := exchangeToken("cid", "csecret", server.URL, "subject-tok", "aud", "openid", false, "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

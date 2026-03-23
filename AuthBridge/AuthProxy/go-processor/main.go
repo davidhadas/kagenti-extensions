@@ -29,10 +29,14 @@ import (
 
 // Configuration for token exchange
 type Config struct {
-	ClientID     string
-	ClientSecret string
-	TokenURL     string
-	mu           sync.RWMutex
+	ClientID       string
+	ClientSecret   string
+	TokenURL       string
+	TargetAudience string
+	TargetScopes   string
+	SpireEnabled   bool   // Whether to use SPIFFE federated auth
+	JWTSvidPath    string // Path to JWT-SVID file (reloaded on each token exchange)
+	mu             sync.RWMutex
 }
 
 var globalConfig = &Config{}
@@ -94,9 +98,9 @@ const defaultRoutesConfigPath = "/etc/authproxy/routes.yaml"
 
 var globalResolver resolver.TargetResolver
 
-// defaultOutboundPolicy controls behavior for outbound requests that don't match
-// any route in routes.yaml. "passthrough" (default) skips token exchange;
-// "exchange" attempts exchange using global config (legacy behavior).
+// defaultOutboundPolicy controls behavior when no route matches.
+// "passthrough" (default): Pass traffic unchanged unless explicit route matches.
+// "exchange": Attempt token exchange using global config if available.
 var defaultOutboundPolicy = "passthrough"
 
 // defaultBypassInboundPaths are paths that skip inbound JWT validation by default.
@@ -141,16 +145,21 @@ func readFileContent(path string) (string, error) {
 
 // loadConfig loads configuration from environment variables or files.
 // For dynamic credentials from client-registration, it reads from /shared/ files.
-// Retries loading credentials from files if they're not immediately available.
+// All configuration is loaded regardless of SPIRE enablement for simplicity.
 func loadConfig() {
 	globalConfig.mu.Lock()
 	defer globalConfig.mu.Unlock()
 
 	// Static configuration from environment variables
 	globalConfig.TokenURL = os.Getenv("TOKEN_URL")
+	globalConfig.TargetAudience = os.Getenv("TARGET_AUDIENCE")
+	globalConfig.TargetScopes = os.Getenv("TARGET_SCOPES")
 
-	// For CLIENT_ID and CLIENT_SECRET, prefer files from /shared/ (dynamic credentials)
-	// This allows AuthProxy to use the same credentials as the auto-registered client
+	// SPIRE/SPIFFE configuration
+	spireEnabled := os.Getenv("SPIRE_ENABLED")
+	globalConfig.SpireEnabled = (spireEnabled == "true")
+
+	// File paths for dynamic credentials
 	clientIDFile := os.Getenv("CLIENT_ID_FILE")
 	if clientIDFile == "" {
 		clientIDFile = "/shared/client-id.txt"
@@ -159,30 +168,46 @@ func loadConfig() {
 	if clientSecretFile == "" {
 		clientSecretFile = "/shared/client-secret.txt"
 	}
+	jwtSvidPath := os.Getenv("JWT_SVID_PATH")
+	if jwtSvidPath == "" {
+		jwtSvidPath = "/opt/jwt_svid.token"
+	}
 
-	// Try to load from files first (preferred for SPIFFE-based dynamic credentials)
+	// Load CLIENT_ID from file or environment
 	if clientID, err := readFileContent(clientIDFile); err == nil && clientID != "" {
 		globalConfig.ClientID = clientID
 		log.Printf("[Config] Loaded CLIENT_ID from file: %s", clientIDFile)
 	} else if envClientID := os.Getenv("CLIENT_ID"); envClientID != "" {
-		// Fall back to environment variable
 		globalConfig.ClientID = envClientID
 		log.Printf("[Config] Using CLIENT_ID from environment variable")
 	}
 
+	// Load CLIENT_SECRET from file or environment (always load, regardless of SPIRE)
 	if clientSecret, err := readFileContent(clientSecretFile); err == nil && clientSecret != "" {
 		globalConfig.ClientSecret = clientSecret
 		log.Printf("[Config] Loaded CLIENT_SECRET from file: %s", clientSecretFile)
 	} else if envClientSecret := os.Getenv("CLIENT_SECRET"); envClientSecret != "" {
-		// Fall back to environment variable
 		globalConfig.ClientSecret = envClientSecret
 		log.Printf("[Config] Using CLIENT_SECRET from environment variable")
 	}
 
+	// Store JWT-SVID path (will be reloaded on each token exchange)
+	globalConfig.JWTSvidPath = jwtSvidPath
+	if jwtSvid, err := readFileContent(jwtSvidPath); err == nil && jwtSvid != "" {
+		log.Printf("[Config] JWT-SVID available at: %s (%d bytes)", jwtSvidPath, len(jwtSvid))
+	} else if err != nil {
+		log.Printf("[Config] JWT-SVID not available at %s: %v", jwtSvidPath, err)
+	}
+
+	// Log configuration summary
 	log.Printf("[Config] Configuration loaded:")
 	log.Printf("[Config]   CLIENT_ID: %s", globalConfig.ClientID)
 	log.Printf("[Config]   CLIENT_SECRET: [REDACTED, length=%d]", len(globalConfig.ClientSecret))
+	log.Printf("[Config]   SPIRE_ENABLED: %v", globalConfig.SpireEnabled)
+	log.Printf("[Config]   JWT_SVID_PATH: %s", globalConfig.JWTSvidPath)
 	log.Printf("[Config]   TOKEN_URL: %s", globalConfig.TokenURL)
+	log.Printf("[Config]   TARGET_AUDIENCE: %s", globalConfig.TargetAudience)
+	log.Printf("[Config]   TARGET_SCOPES: %s", globalConfig.TargetScopes)
 }
 
 // waitForCredentials waits for credential files to be available
@@ -218,11 +243,19 @@ func waitForCredentials(maxWait time.Duration) bool {
 	return false
 }
 
-// getConfig returns the current configuration
-func getConfig() (clientID, clientSecret, tokenURL string) {
+// getConfig returns a copy of the current configuration
+func getConfig() Config {
 	globalConfig.mu.RLock()
 	defer globalConfig.mu.RUnlock()
-	return globalConfig.ClientID, globalConfig.ClientSecret, globalConfig.TokenURL
+	return Config{
+		ClientID:       globalConfig.ClientID,
+		ClientSecret:   globalConfig.ClientSecret,
+		TokenURL:       globalConfig.TokenURL,
+		TargetAudience: globalConfig.TargetAudience,
+		TargetScopes:   globalConfig.TargetScopes,
+		SpireEnabled:   globalConfig.SpireEnabled,
+		JWTSvidPath:    globalConfig.JWTSvidPath,
+	}
 }
 
 var (
@@ -311,16 +344,6 @@ func denyRequest(message string) *v3.ProcessingResponse {
 	}
 }
 
-// passthroughResponse returns an empty headers response that forwards the
-// request unchanged. Used when token exchange is not needed or not configured.
-func passthroughResponse() *v3.ProcessingResponse {
-	return &v3.ProcessingResponse{
-		Response: &v3.ProcessingResponse_RequestHeaders{
-			RequestHeaders: &v3.HeadersResponse{},
-		},
-	}
-}
-
 // denyOutboundRequest returns a 503 Service Unavailable when outbound token
 // acquisition fails, preventing unauthenticated requests from reaching downstream.
 func denyOutboundRequest(message string) *v3.ProcessingResponse {
@@ -346,22 +369,37 @@ func getHostFromHeaders(headers []*core.HeaderValue) string {
 
 // exchangeToken performs OAuth 2.0 Token Exchange (RFC 8693).
 // Exchanges the subject token for a new token with the specified audience.
-// Requires the exchanging client to be in the subject token's audience.
-// When using dynamic credentials from /shared/, this works because the token's
-// audience matches the auto-registered client's SPIFFE ID.
-func exchangeToken(clientID, clientSecret, tokenURL, subjectToken, audience, scopes, actorToken string) (string, error) {
+//
+// Two authentication modes are supported:
+// 1. Traditional: Uses client_secret for client authentication
+// 2. SPIFFE Federated: Uses JWT-SVID (reloaded from file on each call) as client_assertion
+//
+// When spireEnabled=true:
+// - Reloads JWT-SVID from the jwtSvidPath parameter on each token exchange
+// - Uses client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-spiffe"
+// - Uses client_assertion: <JWT-SVID> instead of client_secret
+// - Requires Keycloak with federated-jwt client authenticator and SPIFFE identity provider
+//
+// When spireEnabled=false:
+// - Uses traditional client_secret authentication
+// - Requires the exchanging client to be in the subject token's audience
+//
+// Optional actor token support (RFC 8693 Section 4.1):
+// - When actorToken is non-empty, includes actor_token in the exchange request
+// - Enables act claim chaining for multi-hop delegation scenarios
+func exchangeToken(clientID, clientSecret, tokenURL, subjectToken, audience, scopes string, spireEnabled bool, jwtSvidPath, actorToken string) (string, error) {
 	log.Printf("[Token Exchange] Starting token exchange")
 	log.Printf("[Token Exchange] Token URL: %s", tokenURL)
 	log.Printf("[Token Exchange] Client ID: %s", clientID)
 	log.Printf("[Token Exchange] Audience: %s", audience)
 	log.Printf("[Token Exchange] Scopes: %s", scopes)
+	log.Printf("[Token Exchange] SPIRE Enabled: %v", spireEnabled)
 	if actorToken != "" {
 		log.Printf("[Token Exchange] Actor token: present (act claim chaining enabled)")
 	}
 
 	data := url.Values{}
 	data.Set("client_id", clientID)
-	data.Set("client_secret", clientSecret)
 	data.Set("grant_type", "urn:ietf:params:oauth:grant-type:token-exchange")
 	data.Set("requested_token_type", "urn:ietf:params:oauth:token-type:access_token")
 	data.Set("subject_token", subjectToken)
@@ -369,9 +407,34 @@ func exchangeToken(clientID, clientSecret, tokenURL, subjectToken, audience, sco
 	data.Set("audience", audience)
 	data.Set("scope", scopes)
 
+	// Add actor token if provided (optional RFC 8693 feature)
 	if actorToken != "" {
 		data.Set("actor_token", actorToken)
 		data.Set("actor_token_type", "urn:ietf:params:oauth:token-type:access_token")
+	}
+
+	// Choose authentication method based on SPIRE enablement
+	if spireEnabled {
+		// SPIFFE Federated Authentication
+		log.Printf("[Token Exchange] Using SPIFFE federated authentication")
+
+		// Reload JWT-SVID from file on each token exchange to ensure it's fresh
+		// spiffe-helper continuously updates this file (~every 2.5 minutes)
+		jwtSvid, err := readFileContent(jwtSvidPath)
+		if err != nil || jwtSvid == "" {
+			log.Printf("[Token Exchange] Failed to load JWT-SVID from %s: %v", jwtSvidPath, err)
+			return "", fmt.Errorf("JWT-SVID unavailable at %s (SPIRE enabled but file not readable)", jwtSvidPath)
+		}
+
+		log.Printf("[Token Exchange] Loaded fresh JWT-SVID from %s (%d bytes)", jwtSvidPath, len(jwtSvid))
+
+		// Use jwt-spiffe assertion type (required by Keycloak's SPIFFE provider)
+		data.Set("client_assertion_type", "urn:ietf:params:oauth:client-assertion-type:jwt-spiffe")
+		data.Set("client_assertion", jwtSvid)
+	} else {
+		// Traditional client_secret authentication
+		log.Printf("[Token Exchange] Using traditional client_secret authentication")
+		data.Set("client_secret", clientSecret)
 	}
 
 	resp, err := http.PostForm(tokenURL, data)
@@ -552,43 +615,58 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 	// Handle passthrough routes - skip token exchange
 	if targetConfig != nil && targetConfig.Passthrough {
 		log.Printf("[Resolver] Passthrough enabled for host %q, skipping token exchange", requestHost)
-		return passthroughResponse()
+		return &v3.ProcessingResponse{
+			Response: &v3.ProcessingResponse_RequestHeaders{
+				RequestHeaders: &v3.HeadersResponse{},
+			},
+		}
 	}
 
-	// When no route matches and policy is "passthrough", skip token exchange.
-	// This prevents unintended exchange for LLM APIs, telemetry, and other
-	// services that don't use Keycloak tokens.
+	// Handle default outbound policy when no route matches
 	if targetConfig == nil && defaultOutboundPolicy == "passthrough" {
-		log.Printf("[Outbound] No route for host %q, default policy is passthrough — skipping token exchange", requestHost)
-		return passthroughResponse()
+		log.Printf("[Resolver] No route for host %q and default policy is passthrough, skipping token exchange", requestHost)
+		return &v3.ProcessingResponse{
+			Response: &v3.ProcessingResponse_RequestHeaders{
+				RequestHeaders: &v3.HeadersResponse{},
+			},
+		}
 	}
 
 	// Get global configuration (from files or env vars)
-	clientID, clientSecret, tokenURL := getConfig()
+	config := getConfig()
 
-	// Get target audience and scopes from the route configuration.
-	// These are required per-route fields; there is no global fallback.
-	var targetAudience, targetScopes string
+	// Apply target-specific overrides if available
+	targetAudience := config.TargetAudience
+	targetScopes := config.TargetScopes
+	tokenURL := config.TokenURL
 	if targetConfig != nil {
 		log.Printf("[Resolver] Applying target config for host %q", requestHost)
-		targetAudience = targetConfig.Audience
-		targetScopes = targetConfig.Scopes
+		if targetConfig.Audience != "" {
+			targetAudience = targetConfig.Audience
+			log.Printf("[Resolver] Using target audience: %s", targetAudience)
+		}
+		if targetConfig.Scopes != "" {
+			targetScopes = targetConfig.Scopes
+			log.Printf("[Resolver] Using target scopes: %s", targetScopes)
+		}
 		if targetConfig.TokenEndpoint != "" {
 			tokenURL = targetConfig.TokenEndpoint
 			log.Printf("[Resolver] Using target token_url: %s", tokenURL)
 		}
 	}
 
-	if clientID != "" && clientSecret != "" && tokenURL != "" && targetAudience != "" && targetScopes != "" {
+	// Check if we have required config (clientSecret not needed when SPIRE is enabled)
+	hasCredentials := (config.SpireEnabled && config.JWTSvidPath != "") || config.ClientSecret != ""
+	if config.ClientID != "" && hasCredentials && tokenURL != "" && targetAudience != "" && targetScopes != "" {
 		log.Println("[Token Exchange] Configuration loaded, attempting token exchange")
-		log.Printf("[Token Exchange] Client ID: %s", clientID)
+		log.Printf("[Token Exchange] Client ID: %s", config.ClientID)
 		log.Printf("[Token Exchange] Target Audience: %s", targetAudience)
 		log.Printf("[Token Exchange] Target Scopes: %s", targetScopes)
 
 		// Obtain actor token for act claim chaining (RFC 8693 Section 4.1)
 		var actorToken string
 		if actorTokenEnabled {
-			actorToken, err = globalActorCache.getActorToken(clientID, clientSecret, tokenURL)
+			actorToken, err = globalActorCache.getActorToken(config.ClientID, config.ClientSecret, tokenURL)
 			if err != nil {
 				log.Printf("[Actor Token] WARNING: failed to obtain actor token: %v, proceeding without", err)
 			}
@@ -600,7 +678,7 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 			subjectToken = strings.TrimPrefix(subjectToken, "bearer ")
 
 			if subjectToken != authHeader {
-				newToken, err := exchangeToken(clientID, clientSecret, tokenURL, subjectToken, targetAudience, targetScopes, actorToken)
+				newToken, err := exchangeToken(config.ClientID, config.ClientSecret, tokenURL, subjectToken, targetAudience, targetScopes, config.SpireEnabled, config.JWTSvidPath, actorToken)
 				if err == nil {
 					log.Printf("[Token Exchange] Successfully exchanged token, replacing Authorization header")
 					return &v3.ProcessingResponse{
@@ -633,7 +711,7 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 			// This handles agent frameworks that don't propagate the inbound token.
 			// The token uses the agent's identity rather than the end user's.
 			log.Printf("[Client Credentials] No Authorization header on outbound, falling back to client_credentials grant")
-			newToken, _, err := clientCredentialsGrant(clientID, clientSecret, tokenURL, targetAudience, targetScopes)
+			newToken, _, err := clientCredentialsGrant(config.ClientID, config.ClientSecret, tokenURL, targetAudience, targetScopes)
 			if err == nil {
 				log.Printf("[Client Credentials] Injecting token into outbound request")
 				return &v3.ProcessingResponse{
@@ -661,12 +739,16 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 	} else {
 		log.Println("[Token Exchange] Missing configuration, skipping token exchange")
 		log.Printf("[Token Exchange] CLIENT_ID present: %v, CLIENT_SECRET present: %v, TOKEN_URL present: %v",
-			clientID != "", clientSecret != "", tokenURL != "")
-		log.Printf("[Token Exchange] Route target_audience present: %v, Route token_scopes present: %v",
+			config.ClientID != "", config.ClientSecret != "", tokenURL != "")
+		log.Printf("[Token Exchange] TARGET_AUDIENCE present: %v, TARGET_SCOPES present: %v",
 			targetAudience != "", targetScopes != "")
 	}
 
-	return passthroughResponse()
+	return &v3.ProcessingResponse{
+		Response: &v3.ProcessingResponse_RequestHeaders{
+			RequestHeaders: &v3.HeadersResponse{},
+		},
+	}
 }
 
 func (p *processor) Process(stream v3.ExternalProcessor_ProcessServer) error {
@@ -738,34 +820,12 @@ func main() {
 	// Load configuration from files (or environment variables as fallback)
 	loadConfig()
 
-	// Derive TOKEN_URL and ISSUER from KEYCLOAK_URL + KEYCLOAK_REALM when not explicitly set.
-	// Explicit values always take precedence (override).
-	keycloakURL := strings.TrimRight(os.Getenv("KEYCLOAK_URL"), "/")
-	keycloakRealm := os.Getenv("KEYCLOAK_REALM")
-
-	_, _, tokenURL := getConfig()
-	if tokenURL == "" && keycloakURL != "" && keycloakRealm != "" {
-		tokenURL = keycloakURL + "/realms/" + keycloakRealm + "/protocol/openid-connect/token"
-		globalConfig.mu.Lock()
-		globalConfig.TokenURL = tokenURL
-		globalConfig.mu.Unlock()
-		log.Printf("[Config] TOKEN_URL derived from KEYCLOAK_URL + KEYCLOAK_REALM: %s", tokenURL)
-	} else if tokenURL != "" {
-		log.Printf("[Config] TOKEN_URL set explicitly: %s", tokenURL)
-	}
-
-	inboundIssuer = os.Getenv("ISSUER")
-	if inboundIssuer == "" && keycloakURL != "" && keycloakRealm != "" {
-		inboundIssuer = keycloakURL + "/realms/" + keycloakRealm
-		log.Printf("[Config] ISSUER derived from KEYCLOAK_URL + KEYCLOAK_REALM: %s", inboundIssuer)
-	} else if inboundIssuer != "" {
-		log.Printf("[Config] ISSUER set explicitly: %s", inboundIssuer)
-	}
-
 	// Initialize inbound JWT validation
+	config := getConfig()
+	inboundIssuer = os.Getenv("ISSUER")
 	expectedAudience = os.Getenv("EXPECTED_AUDIENCE")
-	if tokenURL != "" && inboundIssuer != "" {
-		inboundJWKSURL = deriveJWKSURL(tokenURL)
+	if config.TokenURL != "" && inboundIssuer != "" {
+		inboundJWKSURL = deriveJWKSURL(config.TokenURL)
 		initJWKSCache(inboundJWKSURL)
 		log.Printf("[Inbound] Issuer: %s", inboundIssuer)
 		if expectedAudience != "" {
@@ -774,7 +834,7 @@ func main() {
 			log.Printf("[Inbound] Audience validation disabled (EXPECTED_AUDIENCE not set)")
 		}
 	} else {
-		if tokenURL == "" {
+		if config.TokenURL == "" {
 			log.Println("[Inbound] TOKEN_URL not configured, inbound JWT validation disabled")
 		}
 		if inboundIssuer == "" {
@@ -799,16 +859,16 @@ func main() {
 	}
 	log.Printf("[Inbound] Bypass paths: %v", bypassInboundPaths)
 
-	// Initialize outbound policy (default: passthrough)
-	if policy, ok := os.LookupEnv("DEFAULT_OUTBOUND_POLICY"); ok {
-		policy = strings.TrimSpace(strings.ToLower(policy))
-		if policy == "exchange" || policy == "passthrough" {
-			defaultOutboundPolicy = policy
+	// Initialize default outbound policy
+	if policy := os.Getenv("DEFAULT_OUTBOUND_POLICY"); policy != "" {
+		if policy != "exchange" && policy != "passthrough" {
+			log.Printf("[Outbound] Warning: Unknown DEFAULT_OUTBOUND_POLICY %q, defaulting to 'passthrough'. Valid values: 'exchange', 'passthrough'", policy)
+			defaultOutboundPolicy = "passthrough"
 		} else {
-			log.Printf("[Outbound] Unknown DEFAULT_OUTBOUND_POLICY %q, using default %q", policy, defaultOutboundPolicy)
+			defaultOutboundPolicy = policy
 		}
 	}
-	log.Printf("[Outbound] Default outbound policy: %s", defaultOutboundPolicy)
+	log.Printf("[Outbound] Default policy when no route matches: %s", defaultOutboundPolicy)
 
 	// Initialize the target resolver
 	configPath := os.Getenv("ROUTES_CONFIG_PATH")

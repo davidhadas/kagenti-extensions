@@ -1,7 +1,7 @@
 # Use minimal Python base image
 FROM python:3.14-slim
 
-# Create non-root user with UID/GID 1000
+# Create non-root user with UID/GID 1000 (matches spiffe-helper and fsGroup)
 # IMPORTANT: These values MUST match ClientRegistrationUID/GID in
 # kagenti-webhook/internal/webhook/injector/container_builder.go
 # The webhook injects this container with runAsUser/runAsGroup set to those constants.
