@@ -214,7 +214,7 @@ spec:
             - name: KEYCLOAK_URL
               value: "http://keycloak-service.keycloak.svc:8080"
             - name: KEYCLOAK_REALM
-              value: "demo"
+              value: "kagenti"
             - name: KEYCLOAK_ADMIN_USERNAME
               value: "admin"
             - name: KEYCLOAK_ADMIN_PASSWORD

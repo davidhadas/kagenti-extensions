@@ -322,8 +322,8 @@ Create these ConfigMaps in the {namespace} namespace:
 #    Set EXPECTED_AUDIENCE to the workload's SPIFFE ID to enable inbound audience validation.
 kubectl create configmap authbridge-config -n {namespace} \\
   --from-literal=KEYCLOAK_URL=http://keycloak-service.keycloak.svc:8080 \\
-  --from-literal=KEYCLOAK_REALM=demo \\
-  --from-literal=ISSUER=http://keycloak.localtest.me:8080/realms/demo
+  --from-literal=KEYCLOAK_REALM=kagenti \\
+  --from-literal=ISSUER=http://keycloak.localtest.me:8080/realms/kagenti
 
 # 2. keycloak-admin-secret Secret (for client-registration)
 kubectl create secret generic keycloak-admin-secret -n {namespace} \\
@@ -410,7 +410,7 @@ CLIENT_ID=$(cat /shared/client-id.txt)
 CLIENT_SECRET=$(cat /shared/client-secret.txt)
 
 # Get a token
-TOKEN=$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \\
+TOKEN=$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token \\
   -d 'grant_type=client_credentials' \\
   -d "client_id=$CLIENT_ID" \\
   -d "client_secret=$CLIENT_SECRET" | jq -r '.access_token')
@@ -423,7 +423,7 @@ curl -H "Authorization: Bearer $TOKEN" http://auth-target-service.authbridge:808
 # Expected: "authorized"
 
 # Test with user token (demonstrates subject preservation)
-USER_TOKEN=$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/demo/protocol/openid-connect/token \\
+USER_TOKEN=$(curl -sX POST http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token \\
   -d 'grant_type=password' \\
   -d "client_id=$CLIENT_ID" \\
   -d "client_secret=$CLIENT_SECRET" \\
