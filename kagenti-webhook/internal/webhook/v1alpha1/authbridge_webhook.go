@@ -56,7 +56,7 @@ func SetupAuthBridgeWebhookWithManager(mgr ctrl.Manager, mutator *injector.PodMu
 //
 //nolint:gocritic // hugeParam: admission.Handler interface requires value receiver for admission.Request
 func (w *AuthBridgeWebhook) Handle(ctx context.Context, req admission.Request) admission.Response {
-	authbridgelog.Info("AuthBridge webhook called",
+	authbridgelog.Info("AuthBridge webhook: admission request",
 		"kind", req.Kind.Kind,
 		"namespace", req.Namespace,
 		"name", req.Name,
@@ -83,8 +83,34 @@ func (w *AuthBridgeWebhook) Handle(ctx context.Context, req admission.Request) a
 	// but GenerateName is set by the owning controller (e.g. "myapp-7d4f8b9c5-").
 	resourceName := deriveWorkloadName(&pod)
 
+	opRegSecret := strings.TrimSpace(pod.Annotations[injector.AnnotationClientRegistrationSecretName])
+	authbridgelog.Info("AuthBridge webhook: processing Pod (from workload controller)",
+		"namespace", req.Namespace,
+		"workloadKey", resourceName,
+		"podGenerateName", pod.GenerateName,
+		"podName", pod.Name,
+		"kagentiType", pod.Labels[injector.KagentiTypeLabel],
+		"operatorClientRegSecretName", opRegSecret,
+		"alreadyInjected", w.isAlreadyInjected(&pod.Spec))
+
 	// Check if already injected (idempotency)
 	if w.isAlreadyInjected(&pod.Spec) {
+		// Reinvocation / upgrade: sidecars exist but operator-managed registration Secret mounts may
+		// still be missing (annotation added after first injection pass).
+		if injector.NeedsOperatorClientRegVolumePatch(&pod.Spec, pod.Annotations) {
+			injector.ApplyOperatorClientRegSecretVolumes(&pod.Spec, pod.Annotations)
+			marshaledMutated, err := json.Marshal(&pod)
+			if err != nil {
+				authbridgelog.Error(err, "Failed to marshal Pod for operator client-reg volumes")
+				return admission.Errored(http.StatusInternalServerError, err)
+			}
+			authbridgelog.Info("Applied operator client-reg Secret mounts on already-injected Pod (reinvocation)",
+				"namespace", req.Namespace,
+				"workloadKey", resourceName,
+				"secretName", opRegSecret,
+				"path", "operator_secret_mount_only")
+			return admission.PatchResponseFromRaw(req.Object.Raw, marshaledMutated)
+		}
 		authbridgelog.Info("Skipping - sidecars already injected",
 			"namespace", req.Namespace,
 			"name", resourceName)

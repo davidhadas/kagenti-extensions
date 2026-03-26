@@ -496,12 +496,12 @@ func TestBuildAuthBridgeContainer_SpireEnabled_AllMounts(t *testing.T) {
 	container := builder.BuildAuthBridgeContainer("my-agent", "test-ns", true, true)
 
 	wantMounts := map[string]string{
-		"envoy-config":        "/etc/envoy",
-		"authproxy-routes":    "/etc/authproxy",
-		"shared-data":         "/shared",
-		"svid-output":         "/opt",
+		"envoy-config":         "/etc/envoy",
+		"authproxy-routes":     "/etc/authproxy",
+		"shared-data":          "/shared",
+		"svid-output":          "/opt",
 		"spiffe-helper-config": "/etc/spiffe-helper",
-		"spire-agent-socket":  "/spiffe-workload-api",
+		"spire-agent-socket":   "/spiffe-workload-api",
 	}
 
 	mountsByName := make(map[string]string)

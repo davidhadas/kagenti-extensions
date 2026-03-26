@@ -19,6 +19,7 @@ package injector
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/kagenti/kagenti-extensions/kagenti-webhook/internal/webhook/config"
 	corev1 "k8s.io/api/core/v1"
@@ -284,6 +285,12 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		}
 	}
 
+	// Operator-managed client registration: mount Keycloak credentials from a Secret named in
+	// annotations (written by kagenti-operator) for all containers using shared-data.
+	ApplyOperatorClientRegSecretVolumes(podSpec, annotations)
+
+	logClientRegistrationPaths(namespace, crName, labels, currentGates.CombinedSidecar, decision, annotations)
+
 	// Set fsGroup for shared volume access when SPIRE is enabled
 	if spireEnabled {
 		ensureFSGroup(podSpec)
@@ -295,6 +302,40 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 		"volumes", len(podSpec.Volumes),
 		"spireEnabled", spireEnabled)
 	return true, nil
+}
+
+// logClientRegistrationPaths records how Keycloak client credentials are delivered for this Pod:
+// operator-mounted Secret (kagenti-operator), legacy kagenti-client-registration sidecar, or combined authbridge.
+func logClientRegistrationPaths(namespace, crName string, labels map[string]string, combinedSidecar bool, decision InjectionDecision, annotations map[string]string) {
+	opSecret := strings.TrimSpace(annotations[AnnotationClientRegistrationSecretName])
+
+	var paths []string
+	if opSecret != "" {
+		paths = append(paths, "operator_secret_mount")
+	}
+
+	if combinedSidecar {
+		if decision.EnvoyProxy.Inject && decision.ClientRegistration.Inject {
+			paths = append(paths, "client_registration_in_combined_authbridge_container")
+		}
+	} else if decision.ClientRegistration.Inject {
+		paths = append(paths, "client_registration_sidecar_kagenti_client_registration")
+	}
+
+	if len(paths) == 0 {
+		paths = append(paths, "none_webhook_skips_in_pod_credentials")
+	}
+
+	mutatorLog.Info("AuthBridge client registration: how credentials are supplied for this Pod",
+		"namespace", namespace,
+		"workloadKey", crName,
+		"kagentiType", labels[KagentiTypeLabel],
+		"deliveryPaths", strings.Join(paths, ","),
+		"operatorSecretName", opSecret,
+		"combinedSidecarMode", combinedSidecar,
+		"injectClientRegistrationSidecar", decision.ClientRegistration.Inject,
+		"injectEnvoyOrAuthbridge", decision.EnvoyProxy.Inject,
+	)
 }
 
 const managedByLabel = "kagenti.io/managed-by"
