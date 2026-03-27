@@ -287,7 +287,7 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 
 	// Operator-managed client registration: mount Keycloak credentials from a Secret named in
 	// annotations (written by kagenti-operator) for all containers using shared-data.
-	ApplyOperatorClientRegSecretVolumes(podSpec, annotations)
+	ApplyKeycloakClientCredentialsSecretVolumes(podSpec, annotations)
 
 	logClientRegistrationPaths(namespace, crName, labels, currentGates.CombinedSidecar, decision, annotations)
 
@@ -305,13 +305,13 @@ func (m *PodMutator) InjectAuthBridge(ctx context.Context, podSpec *corev1.PodSp
 }
 
 // logClientRegistrationPaths records how Keycloak client credentials are delivered for this Pod:
-// operator-mounted Secret (kagenti-operator), legacy kagenti-client-registration sidecar, or combined authbridge.
+// Secret mounted from annotation (kagenti-operator), legacy kagenti-client-registration sidecar, or combined authbridge.
 func logClientRegistrationPaths(namespace, crName string, labels map[string]string, combinedSidecar bool, decision InjectionDecision, annotations map[string]string) {
-	opSecret := strings.TrimSpace(annotations[AnnotationClientRegistrationSecretName])
+	keycloakClientCredentialsSecret := strings.TrimSpace(annotations[AnnotationKeycloakClientSecretName])
 
 	var paths []string
-	if opSecret != "" {
-		paths = append(paths, "operator_secret_mount")
+	if keycloakClientCredentialsSecret != "" {
+		paths = append(paths, "keycloak_client_credentials_secret_mount")
 	}
 
 	if combinedSidecar {
@@ -331,7 +331,7 @@ func logClientRegistrationPaths(namespace, crName string, labels map[string]stri
 		"workloadKey", crName,
 		"kagentiType", labels[KagentiTypeLabel],
 		"deliveryPaths", strings.Join(paths, ","),
-		"operatorSecretName", opSecret,
+		"keycloakClientCredentialsSecretName", keycloakClientCredentialsSecret,
 		"combinedSidecarMode", combinedSidecar,
 		"injectClientRegistrationSidecar", decision.ClientRegistration.Inject,
 		"injectEnvoyOrAuthbridge", decision.EnvoyProxy.Inject,
