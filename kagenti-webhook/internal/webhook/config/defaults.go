@@ -13,7 +13,7 @@ func CompiledDefaults() *PlatformConfig {
 		Images: ImageConfig{
 			EnvoyProxy:         "ghcr.io/kagenti/kagenti-extensions/envoy-with-processor:latest",
 			ProxyInit:          "ghcr.io/kagenti/kagenti-extensions/proxy-init:latest",
-			SpiffeHelper:       "ghcr.io/kagenti/kagenti-extensions/spiffe-helper:v0.11.0",
+			SpiffeHelper:       "ghcr.io/kagenti/kagenti-extensions/spiffe-helper:latest",
 			ClientRegistration: "ghcr.io/kagenti/kagenti-extensions/client-registration:latest",
 			AuthBridge:         "ghcr.io/kagenti/kagenti-extensions/authbridge:latest",
 			PullPolicy:         corev1.PullIfNotPresent,
