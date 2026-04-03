@@ -120,13 +120,13 @@ inbound JWT validation works with signature and issuer checks alone.
 1. Navigate to [Import Tool](http://kagenti-ui.localtest.me:8080/tools/import)
    in the Kagenti UI.
 
-2. In the **Namespace** drop-down, choose `team1`.
+2. In the **Namespace** drop-down, choose `team1`, fill *Tool Name* with `weather-tool` (do not use uppercase)
 
 3. Select **Deploy From Image** as the deployment method.
 
 4. For **Container Image**, use `ghcr.io/kagenti/agent-examples/weather_tool`.
 
-5. Pick a corresponding **Image Tag** or keep the default `latest`.
+5. Pick a corresponding **Image Tag**, replace the default `v0.0.1` with `latest`.
 
 6. Set **MCP Transport Protocol** to `streamable HTTP`.
 
@@ -137,7 +137,7 @@ inbound JWT validation works with signature and issuer checks alone.
    > The weather tool is a simple MCP server calling a public weather API. It
    > does not need AuthBridge sidecars or token validation.
 
-9. Click **Deploy New Tool**.
+9. Click **Deploy Tool** and the button should change to "Deploying". If it is not changing review input for errors.
 
 ### Verify the tool is running
 
@@ -192,6 +192,12 @@ kubectl get pods -n team1 | grep weather-tool
     > ```bash
     > kubectl create secret generic openai-secret -n team1 \
     >   --from-literal=apikey="<YOUR_OPENAI_API_KEY>"
+    > ```
+    > If you had empty string for "openaiApiKey:" in .secret_values.yaml
+    > the secret with empty string is already created so delete it
+    > if you get "error: failed to create secret secrets "openai-secret" already exists"
+    > ```bash
+    > kubectl delete secret openai-secret -n team1
     > ```
 
 12. Click **Build & Deploy Agent**.
