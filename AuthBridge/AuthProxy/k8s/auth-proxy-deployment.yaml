@@ -96,12 +96,7 @@ spec:
             secretKeyRef:
               name: auth-proxy-config
               key: ISSUER
-        - name: EXPECTED_AUDIENCE
-          valueFrom:
-            secretKeyRef:
-              name: auth-proxy-config
-              key: EXPECTED_AUDIENCE
-              optional: true
+        # Audience validation uses CLIENT_ID from /shared/client-id.txt automatically
         - name: CLIENT_ID
           valueFrom:
             secretKeyRef:

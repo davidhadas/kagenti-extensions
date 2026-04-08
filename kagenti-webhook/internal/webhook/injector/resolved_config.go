@@ -38,7 +38,6 @@ type ResolvedConfig struct {
 	// Token exchange — from namespace CMs (not overridable by AgentRuntime v1alpha1)
 	TokenURL              string
 	Issuer                string
-	ExpectedAudience      string
 	TargetAudience        string
 	TargetScopes          string
 	DefaultOutboundPolicy string
@@ -79,7 +78,6 @@ func ResolveConfig(platform *config.PlatformConfig, ns *NamespaceConfig, ar *Age
 		PlatformClientIDs:          ns.PlatformClientIDs,
 		TokenURL:                   ns.TokenURL,
 		Issuer:                     ns.Issuer,
-		ExpectedAudience:           ns.ExpectedAudience,
 		TargetAudience:             ns.TargetAudience,
 		TargetScopes:               ns.TargetScopes,
 		DefaultOutboundPolicy:      ns.DefaultOutboundPolicy,

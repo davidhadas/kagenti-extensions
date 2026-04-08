@@ -155,8 +155,8 @@ ext_proc (port 9090) performs three checks on the `Authorization: Bearer <token>
    (auto-refreshed via cache). Rejects tampered or forged tokens.
 2. **Issuer** — Confirms the `iss` claim matches the expected Keycloak realm
    (`ISSUER` in `authbridge-config`). Rejects tokens from other identity providers.
-3. **Audience** — If `EXPECTED_AUDIENCE` is set, confirms the `aud` claim includes
-   the agent's SPIFFE ID. Rejects tokens intended for a different service.
+3. **Audience** — Confirms the `aud` claim includes the agent's CLIENT_ID
+   (from `/shared/client-id.txt`). Rejects tokens intended for a different agent.
 
 Requests that fail any check receive an immediate `401 Unauthorized` response from
 Envoy — the agent application never sees them. This is tested in
@@ -318,8 +318,8 @@ cd AuthBridge
 kubectl apply -f demos/github-issue/k8s/configmaps.yaml
 ```
 
-> **Note:** If you're using a different namespace or service account, edit
-> `configmaps.yaml` and update the `namespace` and `EXPECTED_AUDIENCE` fields.
+> **Note:** If you're using a different namespace, edit
+> `configmaps.yaml` and update the `namespace` field.
 
 ---
 

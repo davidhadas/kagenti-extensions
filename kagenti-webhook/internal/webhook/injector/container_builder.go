@@ -442,7 +442,6 @@ func (b *ContainerBuilder) buildEnvoyProxyEnvResolved() []corev1.EnvVar {
 		{Name: "KEYCLOAK_REALM", Value: b.resolved.KeycloakRealm},
 		{Name: "TOKEN_URL", Value: b.resolved.TokenURL},
 		{Name: "ISSUER", Value: b.resolved.Issuer},
-		{Name: "EXPECTED_AUDIENCE", Value: b.resolved.ExpectedAudience},
 		{Name: "TARGET_AUDIENCE", Value: b.resolved.TargetAudience},
 		{Name: "TARGET_SCOPES", Value: b.resolved.TargetScopes},
 		{Name: "CLIENT_ID_FILE", Value: "/shared/client-id.txt"},
@@ -495,16 +494,7 @@ func (b *ContainerBuilder) buildEnvoyProxyEnvLegacy() []corev1.EnvVar {
 				},
 			},
 		},
-		{
-			Name: "EXPECTED_AUDIENCE",
-			ValueFrom: &corev1.EnvVarSource{
-				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: "authbridge-config"},
-					Key:                  "EXPECTED_AUDIENCE",
-					Optional:             ptr.To(true),
-				},
-			},
-		},
+		// Audience validation uses CLIENT_ID from /shared/client-id.txt (per-agent).
 		{
 			Name: "TARGET_AUDIENCE",
 			ValueFrom: &corev1.EnvVarSource{
@@ -658,7 +648,7 @@ func (b *ContainerBuilder) buildAuthBridgeEnvResolved(clientName string, spireEn
 		{Name: "KEYCLOAK_REALM", Value: b.resolved.KeycloakRealm},
 		{Name: "TOKEN_URL", Value: b.resolved.TokenURL},
 		{Name: "ISSUER", Value: b.resolved.Issuer},
-		{Name: "EXPECTED_AUDIENCE", Value: b.resolved.ExpectedAudience},
+		// Audience validation uses CLIENT_ID from /shared/client-id.txt (per-agent).
 		{Name: "TARGET_AUDIENCE", Value: b.resolved.TargetAudience},
 		{Name: "TARGET_SCOPES", Value: b.resolved.TargetScopes},
 		{Name: "CLIENT_ID_FILE", Value: "/shared/client-id.txt"},
@@ -739,16 +729,7 @@ func (b *ContainerBuilder) buildAuthBridgeEnvLegacy(clientName string, spireEnab
 				},
 			},
 		},
-		{
-			Name: "EXPECTED_AUDIENCE",
-			ValueFrom: &corev1.EnvVarSource{
-				ConfigMapKeyRef: &corev1.ConfigMapKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: "authbridge-config"},
-					Key:                  "EXPECTED_AUDIENCE",
-					Optional:             ptr.To(true),
-				},
-			},
-		},
+		// Audience validation uses CLIENT_ID from /shared/client-id.txt (per-agent).
 		{
 			Name: "TARGET_AUDIENCE",
 			ValueFrom: &corev1.EnvVarSource{

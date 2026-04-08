@@ -44,7 +44,6 @@ type NamespaceConfig struct {
 	PlatformClientIDs     string
 	TokenURL              string
 	Issuer                string
-	ExpectedAudience      string
 	TargetAudience        string
 	TargetScopes          string
 	DefaultOutboundPolicy string
@@ -78,7 +77,6 @@ func ReadNamespaceConfig(ctx context.Context, c client.Reader, namespace string)
 		cfg.PlatformClientIDs = cm.Data["PLATFORM_CLIENT_IDS"]
 		cfg.TokenURL = cm.Data["TOKEN_URL"]
 		cfg.Issuer = cm.Data["ISSUER"]
-		cfg.ExpectedAudience = cm.Data["EXPECTED_AUDIENCE"]
 		cfg.TargetAudience = cm.Data["TARGET_AUDIENCE"]
 		cfg.TargetScopes = cm.Data["TARGET_SCOPES"]
 		cfg.DefaultOutboundPolicy = cm.Data["DEFAULT_OUTBOUND_POLICY"]

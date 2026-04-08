@@ -177,7 +177,7 @@ make generate
 Injected sidecars expect these resources to exist in the target namespace:
 
 ConfigMaps:
-- `authbridge-config` -- `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `PLATFORM_CLIENT_IDS` (optional), `TOKEN_URL` (optional, derived), `ISSUER` (optional, derived or explicit), `EXPECTED_AUDIENCE` (optional), `DEFAULT_OUTBOUND_POLICY` (optional). Target audience and scopes are configured per-route in the `authproxy-routes` ConfigMap.
+- `authbridge-config` -- `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `PLATFORM_CLIENT_IDS` (optional), `TOKEN_URL` (optional, derived), `ISSUER` (optional, derived or explicit), `DEFAULT_OUTBOUND_POLICY` (optional). Inbound audience validation uses `CLIENT_ID` from `/shared/client-id.txt`. Target audience and scopes are configured per-route in the `authproxy-routes` ConfigMap.
 - `spiffe-helper-config` -- SPIFFE helper configuration (when SPIRE is enabled)
 - `envoy-config` -- Envoy proxy configuration
 

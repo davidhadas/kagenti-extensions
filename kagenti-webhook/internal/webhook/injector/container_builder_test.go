@@ -582,7 +582,7 @@ func TestBuildAuthBridgeContainer_AllEnvVars(t *testing.T) {
 	requiredEnvNames := []string{
 		"SPIRE_ENABLED", "CLIENT_REGISTRATION_ENABLED",
 		"KEYCLOAK_URL", "KEYCLOAK_REALM", "TOKEN_URL", "ISSUER",
-		"EXPECTED_AUDIENCE", "TARGET_AUDIENCE", "TARGET_SCOPES",
+		"TARGET_AUDIENCE", "TARGET_SCOPES",
 		"CLIENT_ID_FILE", "CLIENT_SECRET_FILE", "ROUTES_CONFIG_PATH",
 		"DEFAULT_OUTBOUND_POLICY",
 		"KEYCLOAK_ADMIN_USERNAME", "KEYCLOAK_ADMIN_PASSWORD",
@@ -675,29 +675,4 @@ func TestBuildAuthBridgeContainer_ClientName(t *testing.T) {
 	t.Error("missing CLIENT_NAME env var")
 }
 
-func TestBuildEnvoyProxyContainer_HasExpectedAudienceFromConfigMap(t *testing.T) {
-	builder := NewContainerBuilder(config.CompiledDefaults())
-	container := builder.BuildEnvoyProxyContainerWithSpireOption(true)
 
-	found := false
-	for _, env := range container.Env {
-		if env.Name == "EXPECTED_AUDIENCE" {
-			found = true
-			if env.ValueFrom == nil || env.ValueFrom.ConfigMapKeyRef == nil {
-				t.Error("EXPECTED_AUDIENCE must use ConfigMapKeyRef")
-				break
-			}
-			if env.ValueFrom.ConfigMapKeyRef.Name != "authbridge-config" {
-				t.Errorf("EXPECTED_AUDIENCE ConfigMapKeyRef.Name = %q, want %q",
-					env.ValueFrom.ConfigMapKeyRef.Name, "authbridge-config")
-			}
-			if env.ValueFrom.ConfigMapKeyRef.Optional == nil || !*env.ValueFrom.ConfigMapKeyRef.Optional {
-				t.Error("EXPECTED_AUDIENCE should be optional")
-			}
-			break
-		}
-	}
-	if !found {
-		t.Error("envoy-proxy container missing EXPECTED_AUDIENCE env var from ConfigMap")
-	}
-}

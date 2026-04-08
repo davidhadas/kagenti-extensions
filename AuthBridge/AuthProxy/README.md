@@ -126,8 +126,7 @@ The Ext Proc reads token exchange configuration directly from environment variab
 |----------|-------------|--------|
 | `TOKEN_URL` | Keycloak token endpoint URL | Environment variable |
 | `ISSUER` | Expected JWT issuer for inbound validation. Must match Keycloak's frontend URL (the `iss` claim in tokens). Required for inbound JWT validation. | Environment variable |
-| `EXPECTED_AUDIENCE` | Expected audience claim for inbound JWT validation. Optional - if not set, audience validation is skipped. | Environment variable |
-| `CLIENT_ID` | Client ID for token exchange | `/shared/client-id.txt` file or `CLIENT_ID` env var |
+| `CLIENT_ID` | Client ID for token exchange and inbound audience validation | `/shared/client-id.txt` file or `CLIENT_ID` env var |
 | `CLIENT_SECRET` | Client secret | `/shared/client-secret.txt` file or `CLIENT_SECRET` env var |
 
 > **Note:** `CLIENT_ID` and `CLIENT_SECRET` are preferentially loaded from `/shared/` files (when using dynamic client registration with SPIFFE). If files are not available, environment variables are used as fallback.
@@ -146,8 +145,7 @@ metadata:
 stringData:
   TOKEN_URL: "http://keycloak:8080/realms/kagenti/protocol/openid-connect/token"
   ISSUER: "http://keycloak.example.com:8080/realms/kagenti"  # Required: must match Keycloak's frontend URL (iss claim in tokens)
-  EXPECTED_AUDIENCE: "authproxy"  # Optional: expected audience for inbound requests
-  CLIENT_ID: "authproxy"
+  CLIENT_ID: "authproxy"  # Also used for inbound audience validation
   CLIENT_SECRET: "<your-client-secret>"
 ```
 

@@ -14,8 +14,7 @@
 #   kubectl apply -f configmaps.yaml
 #
 # Note: These manifests default to namespace "team1". If you deploy to a different
-#       namespace, update the metadata.namespace accordingly. Set EXPECTED_AUDIENCE
-#       to the workload's SPIFFE ID to enable inbound audience validation.
+#       namespace, update the metadata.namespace accordingly.
 
 ---
 # authbridge-config ConfigMap - Unified config for both client-registration and envoy-proxy
@@ -41,9 +40,8 @@ data:
   # TOKEN_URL: "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token"
   # ISSUER: Set explicitly because the internal KEYCLOAK_URL differs from the frontend URL.
   ISSUER: "http://keycloak.localtest.me:8080/realms/kagenti"
-  # EXPECTED_AUDIENCE: Optional. Set to the workload's SPIFFE ID to enable inbound audience validation.
-  # Recommended for production to prevent token replay attacks across workloads.
-  # EXPECTED_AUDIENCE: "spiffe://localtest.me/ns/team1/sa/git-issue-agent"
+  # Audience validation is automatic — uses CLIENT_ID from /shared/client-id.txt
+  # (written by client-registration or operator). No manual configuration needed.
 
 ---
 # authproxy-routes ConfigMap - Per-target token exchange routes

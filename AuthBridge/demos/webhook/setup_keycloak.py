@@ -319,7 +319,7 @@ Create these ConfigMaps in the {namespace} namespace:
 # 1. authbridge-config ConfigMap (for both client-registration and envoy-proxy)
 #    TOKEN_URL and ISSUER are auto-derived from KEYCLOAK_URL + KEYCLOAK_REALM.
 #    Set ISSUER explicitly only when the internal URL differs from the frontend URL.
-#    Set EXPECTED_AUDIENCE to the workload's SPIFFE ID to enable inbound audience validation.
+#    Audience validation uses CLIENT_ID from /shared/client-id.txt automatically.
 kubectl create configmap authbridge-config -n {namespace} \\
   --from-literal=KEYCLOAK_URL=http://keycloak-service.keycloak.svc:8080 \\
   --from-literal=KEYCLOAK_REALM=kagenti \\

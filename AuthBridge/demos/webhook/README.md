@@ -95,7 +95,7 @@ This automatically:
 2. Creates the namespace
 3. Applies all required ConfigMaps (authbridge-config, envoy-config, spiffe-helper-config)
 
-**Note for custom deployments:** `TOKEN_URL` and `ISSUER` are auto-derived from `KEYCLOAK_URL` + `KEYCLOAK_REALM`. Set `ISSUER` explicitly only when the internal `KEYCLOAK_URL` differs from the frontend URL that appears in token `iss` claims (split-horizon DNS). Set `EXPECTED_AUDIENCE` to the workload's SPIFFE ID to enable inbound audience validation.
+**Note for custom deployments:** `TOKEN_URL` and `ISSUER` are auto-derived from `KEYCLOAK_URL` + `KEYCLOAK_REALM`. Set `ISSUER` explicitly only when the internal `KEYCLOAK_URL` differs from the frontend URL that appears in token `iss` claims (split-horizon DNS). Audience validation is automatic using the agent's CLIENT_ID from `/shared/client-id.txt`.
 
 The ConfigMaps include:
 
@@ -104,7 +104,7 @@ The ConfigMaps include:
   - `KEYCLOAK_REALM` - Keycloak realm name
   - `TOKEN_URL` - Keycloak token endpoint (optional, auto-derived from KEYCLOAK_URL + KEYCLOAK_REALM)
   - `ISSUER` - Expected JWT issuer for inbound validation (optional, auto-derived or set explicitly for split-horizon DNS)
-  - `EXPECTED_AUDIENCE` - Expected audience for inbound validation (optional, set to workload's SPIFFE ID)
+  - Audience validation uses CLIENT_ID from `/shared/client-id.txt` automatically (no configuration needed)
   - Target audience and scopes for outbound token exchange are configured per-route in the `authproxy-routes` ConfigMap
 - `spiffe-helper-config` - SPIFFE helper configuration (for SPIRE mode)
 - `envoy-config` - Envoy proxy configuration

@@ -62,7 +62,7 @@ The core ext-proc that handles both traffic directions:
 **Inbound path** (`x-authbridge-direction: inbound`):
 - Validates JWT signature via JWKS (auto-refreshing cache from `TOKEN_URL`-derived JWKS endpoint)
 - Validates issuer claim against `ISSUER` env var
-- Optionally validates audience against `EXPECTED_AUDIENCE` env var
+- Validates audience against `CLIENT_ID` (from `/shared/client-id.txt` or env var)
 - Returns 401 with JSON error body for invalid/missing tokens
 - Removes `x-authbridge-direction` header before forwarding to app
 
@@ -87,7 +87,7 @@ The core ext-proc that handles both traffic directions:
 - Reads `CLIENT_SECRET` from `/shared/client-secret.txt` (file) or `CLIENT_SECRET` env var (fallback)
 - `TOKEN_URL`: explicit env var, or auto-derived from `KEYCLOAK_URL` + `KEYCLOAK_REALM` (i.e. `{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token`)
 - `ISSUER`: explicit env var, or auto-derived from `KEYCLOAK_URL` + `KEYCLOAK_REALM` (i.e. `{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}`)
-- `EXPECTED_AUDIENCE`: optional, set in `authbridge-config` ConfigMap to enable inbound audience validation
+- Inbound audience validation uses `CLIENT_ID` (from `/shared/client-id.txt` or `CLIENT_ID` env var) — automatic, per-agent
 - Outbound route config from `/etc/authproxy/routes.yaml` (default; override with `ROUTES_CONFIG_PATH` env var in standalone deployments). Target audience and scopes are configured per-route only.
 - Default outbound policy from `DEFAULT_OUTBOUND_POLICY` env var: `"passthrough"` (default) or `"exchange"`
 - JWKS URL is derived from TOKEN_URL: replaces `/token` suffix with `/certs`
@@ -178,7 +178,7 @@ When the kagenti-webhook injects sidecars, these ConfigMaps must exist in the ta
 
 | Resource | Kind | Consumer | Key Fields |
 |----------|------|----------|------------|
-| `authbridge-config` | ConfigMap | client-registration, envoy-proxy (ext-proc) | `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `PLATFORM_CLIENT_IDS` (optional), `TOKEN_URL` (optional, derived), `ISSUER` (optional, derived or explicit), `EXPECTED_AUDIENCE` (optional), `DEFAULT_OUTBOUND_POLICY` (optional). Target audience and scopes are configured per-route in `authproxy-routes`. |
+| `authbridge-config` | ConfigMap | client-registration, envoy-proxy (ext-proc) | `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `PLATFORM_CLIENT_IDS` (optional), `TOKEN_URL` (optional, derived), `ISSUER` (optional, derived or explicit), `DEFAULT_OUTBOUND_POLICY` (optional). Inbound audience validation uses `CLIENT_ID` from `/shared/client-id.txt`. Target audience and scopes are configured per-route in `authproxy-routes`. |
 | `keycloak-admin-secret` | Secret | client-registration | `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` |
 | `authproxy-routes` | ConfigMap (optional) | envoy-proxy (ext-proc) | `routes.yaml` with per-host token exchange rules |
 | `spiffe-helper-config` | ConfigMap | spiffe-helper | `helper.conf` (SPIRE agent address, cert paths, JWT SVID config) |

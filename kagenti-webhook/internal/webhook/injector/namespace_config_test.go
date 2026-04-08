@@ -43,7 +43,6 @@ func TestReadNamespaceConfig_AllPresent(t *testing.T) {
 			"PLATFORM_CLIENT_IDS":     "id1,id2",
 			"TOKEN_URL":               "http://keycloak:8080/realms/kagenti/protocol/openid-connect/token",
 			"ISSUER":                  "http://keycloak:8080/realms/kagenti",
-			"EXPECTED_AUDIENCE":       "my-audience",
 			"TARGET_AUDIENCE":         "auth-target",
 			"TARGET_SCOPES":           "openid auth-target-aud",
 			"DEFAULT_OUTBOUND_POLICY": "passthrough",

@@ -98,7 +98,6 @@ AUTHPROXY_SECRET=$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
 kubectl create secret generic auth-proxy-config \
   --from-literal=TOKEN_URL="http://keycloak-service.keycloak.svc.cluster.local:8080/realms/kagenti/protocol/openid-connect/token" \
   --from-literal=ISSUER="http://keycloak.localtest.me:8080/realms/kagenti" \
-  --from-literal=EXPECTED_AUDIENCE="authproxy" \
   --from-literal=CLIENT_ID="authproxy" \
   --from-literal=CLIENT_SECRET="$AUTHPROXY_SECRET"
 ```

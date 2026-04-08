@@ -97,7 +97,7 @@ The webhook reads these resources from the **target namespace** (the namespace w
 
 | Resource | Kind | Keys read by webhook |
 |----------|------|---------------------|
-| `authbridge-config` | ConfigMap | `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `SPIRE_ENABLED`, `PLATFORM_CLIENT_IDS`, `TOKEN_URL`, `ISSUER`, `EXPECTED_AUDIENCE`, `TARGET_AUDIENCE`, `TARGET_SCOPES`, `DEFAULT_OUTBOUND_POLICY` |
+| `authbridge-config` | ConfigMap | `KEYCLOAK_URL`, `KEYCLOAK_REALM`, `SPIRE_ENABLED`, `PLATFORM_CLIENT_IDS`, `TOKEN_URL`, `ISSUER`, `TARGET_AUDIENCE`, `TARGET_SCOPES`, `DEFAULT_OUTBOUND_POLICY` |
 | `keycloak-admin-secret` | Secret | `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` |
 | `spiffe-helper-config` | ConfigMap | `helper.conf` (full file content) |
 | `envoy-config` | ConfigMap | `envoy.yaml` (full file content, optional — if absent, webhook templates it) |
@@ -197,7 +197,7 @@ Env: []corev1.EnvVar{
 ```
 
 This change applies to:
-- `BuildEnvoyProxyContainer*()` — TOKEN_URL, ISSUER, EXPECTED_AUDIENCE, TARGET_AUDIENCE, TARGET_SCOPES, CLIENT_ID_FILE, CLIENT_SECRET_FILE
+- `BuildEnvoyProxyContainer*()` — TOKEN_URL, ISSUER, TARGET_AUDIENCE, TARGET_SCOPES, CLIENT_ID_FILE, CLIENT_SECRET_FILE
 - `BuildClientRegistrationContainer*()` — SPIRE_ENABLED, KEYCLOAK_URL, KEYCLOAK_REALM, KEYCLOAK_ADMIN_USERNAME, KEYCLOAK_ADMIN_PASSWORD, CLIENT_NAME, SECRET_FILE_PATH, PLATFORM_CLIENT_IDS
 - `BuildSpiffeHelperContainer()` — no env var changes (config via volume mount)
 
@@ -291,7 +291,6 @@ type NamespaceConfig struct {
     PlatformClientIDs     string
     TokenURL              string
     Issuer                string
-    ExpectedAudience      string
     TargetAudience        string
     TargetScopes          string
     DefaultOutboundPolicy string
@@ -351,7 +350,6 @@ type ResolvedConfig struct {
     // Token exchange — from namespace CMs (not overridable by AgentRuntime v1alpha1)
     TokenURL              string
     Issuer                string
-    ExpectedAudience      string
     TargetAudience        string
     TargetScopes          string
     DefaultOutboundPolicy string

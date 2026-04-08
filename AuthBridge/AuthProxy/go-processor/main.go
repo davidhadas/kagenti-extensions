@@ -306,11 +306,9 @@ func validateInboundJWT(tokenString, jwksURL, expectedIssuer string) error {
 		return fmt.Errorf("invalid issuer: expected %s, got %s", expectedIssuer, token.Issuer())
 	}
 
-	// Validate audience if EXPECTED_AUDIENCE is configured.
-	// This is optional to support flexible deployment scenarios:
-	// - Set EXPECTED_AUDIENCE for strict zero-trust validation
-	// - Leave unset if audience validation is handled elsewhere (e.g., downstream service)
-	// - In service mesh scenarios, the audience might vary based on routing
+	// Validate audience using the agent's CLIENT_ID (from /shared/client-id.txt).
+	// This ensures tokens are scoped to the specific agent — a token intended for
+	// one agent cannot be used on another agent in the same namespace.
 	if expectedAudience != "" {
 		audiences := token.Audience()
 		audienceValid := false
@@ -842,16 +840,19 @@ func main() {
 		log.Printf("[Config] ISSUER derived from KEYCLOAK_URL + KEYCLOAK_REALM: %s", inboundIssuer)
 	}
 
-	// Initialize inbound JWT validation
-	expectedAudience = os.Getenv("EXPECTED_AUDIENCE")
+	// Use CLIENT_ID (from /shared/client-id.txt) as the expected audience.
+	// This is per-agent by construction — the operator or client-registration
+	// writes the agent's Keycloak client ID to this file.
+	expectedAudience = config.ClientID
+
 	if config.TokenURL != "" && inboundIssuer != "" {
 		inboundJWKSURL = deriveJWKSURL(config.TokenURL)
 		initJWKSCache(inboundJWKSURL)
 		log.Printf("[Inbound] Issuer: %s", inboundIssuer)
 		if expectedAudience != "" {
-			log.Printf("[Inbound] Expected audience: %s", expectedAudience)
+			log.Printf("[Inbound] Expected audience: %s (from CLIENT_ID)", expectedAudience)
 		} else {
-			log.Printf("[Inbound] Audience validation disabled (EXPECTED_AUDIENCE not set)")
+			log.Printf("[Inbound] Audience validation disabled (CLIENT_ID not available)")
 		}
 	} else {
 		if config.TokenURL == "" {
