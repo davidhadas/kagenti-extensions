@@ -170,15 +170,20 @@ timeouts. No manual secret creation is needed for this demo.
 >   --dry-run=client -o yaml | kubectl apply -f -
 > ```
 
-Apply the demo-specific ConfigMaps — the `authproxy-routes` ConfigMap
-configures per-route token exchange (target audience and scopes for the
-`github-tool` host), and `authbridge-config` sets the agent's SPIFFE ID for
-inbound audience validation:
+The `authproxy-routes` ConfigMap (outbound routing rules for token exchange)
+can be configured in two ways:
+
+**Option A (recommended): Via the Kagenti UI** — configure outbound routing
+rules directly during agent import in Step 5 (item 12). No manual ConfigMap
+creation needed.
+
+**Option B: Via kubectl** — apply the demo-specific ConfigMap that configures
+per-route token exchange (target audience and scopes for the `github-tool` host):
 
 ```bash
 cd AuthBridge
 
-# Apply demo ConfigMaps (authbridge-config and authproxy-routes)
+# Apply demo ConfigMaps (authproxy-routes)
 kubectl apply -f demos/github-issue/k8s/configmaps.yaml
 ```
 
@@ -216,17 +221,18 @@ kubectl create secret generic github-tool-secrets -n team1 \
 
 4. Under **Source Code** select:
    - **Git Repository URL**: `https://github.com/kagenti/agent-examples`
-   - **Branch or Tag**: `main`
-   - **Example Tools**: `GitHub Tool`
+   - **Git Branch or Tag**: `main`
+   - **Select Tool**: `GitHub Tool`
    - **Source Subfolder**: `mcp/github_tool`
 
 5. **Workload Type** select `Deployment`
 
 6. Set **MCP Transport Protocol** to `streamable HTTP`
 
-7. Make sure **Enable AuthBridge sidecar injection** is **unchecked**.
+7. **Enable AuthBridge sidecar injection** is unchecked by default for tools.
+   Leave it unchecked.
 
-8. Make sure **Enable SPIRE identity (spiffe-helper sidecar)** is **unchecked**.
+8. **Enable SPIRE identity (spiffe-helper sidecar)** should be **unchecked**.
 
    > The GitHub tool does not need AuthBridge sidecars — it validates incoming tokens
    > directly using its own JWKS logic. Injecting sidecars would cause a port 9090
@@ -279,9 +285,9 @@ kubectl run test-mcp --image=curlimages/curl -n team1 --restart=Never --rm -it -
 
 4. Under **Source Repository** select:
    - **Git Repository URL**: `https://github.com/kagenti/agent-examples`
-   - **Git Branch**: `main`
-   - **Select Example**: `Git Issue Agent`
-   - **Source Path**: `a2a/git_issue_agent`
+   - **Git Branch or Tag**: `main`
+   - **Select Agent**: `Git Issue Agent`
+   - **Source Subfolder**: `a2a/git_issue_agent`
 
 5. **Protocol**: `A2A`
 
@@ -289,9 +295,11 @@ kubectl run test-mcp --image=curlimages/curl -n team1 --restart=Never --rm -it -
 
 7. **Workload Type** select `Deployment`.
 
-8. Make sure **Enable AuthBridge sidecar injection** is checked.
+8. **Enable AuthBridge sidecar injection** is checked by default for agents.
+   Leave it checked.
 
-9. Make sure **Enable SPIRE identity (spiffe-helper sidecar)** is checked.
+9. **Enable SPIRE identity (spiffe-helper sidecar)** is checked by default.
+   Leave it checked.
 
 10. Under **Port Configuration**, set **Service Port** to `8080` and **Target Port** to `8000`
 
@@ -314,7 +322,23 @@ kubectl run test-mcp --image=curlimages/curl -n team1 --restart=Never --rm -it -
    >   --from-literal=apikey="<YOUR_OPENAI_API_KEY>"
    > ```
 
-12. Click **Build & Deploy Agent**.
+12. Expand **Outbound Routing Rules** and add a route for the GitHub tool:
+
+    | Host | Target Audience | Token Scopes |
+    |------|----------------|--------------|
+    | `github-tool-mcp` | `github-tool` | `openid github-tool-aud github-full-access` |
+
+    This tells AuthBridge to exchange tokens when the agent calls the GitHub
+    tool service, requesting the correct audience and scopes for access control.
+
+    > **Note:** This replaces the manual `kubectl apply` of `authproxy-routes`
+    > ConfigMap from Step 2. If you already applied the ConfigMap in Step 2,
+    > you can skip this — the UI-created routes will merge with existing ones.
+
+13. **(Ollama only)** If using Ollama, expand **AuthBridge Advanced Configuration**
+    and enter `11434` in the **Outbound Ports to Exclude** field.
+
+14. Click **Build & Deploy Agent**.
 
 Wait for the Shipwright build to complete and the deployment to become ready.
 
@@ -449,8 +473,10 @@ AuthBridge's `proxy-init` init container redirects traffic through Envoy. By
 default, only port 8080 (Keycloak) is excluded. Ollama traffic on port 11434
 gets intercepted, which corrupts LLM streaming responses.
 
-**Fix:** Add the `kagenti.io/outbound-ports-exclude` annotation to the
-deployment so `proxy-init` skips Ollama's port:
+If you set the **Outbound Ports to Exclude** field to `11434` during import
+(Step 5, item 13), this is already handled and no patch is needed.
+
+Otherwise, add the annotation after deployment:
 
 ```bash
 kubectl patch deployment git-issue-agent -n team1 --type=merge -p='
