@@ -108,6 +108,23 @@ This lets you demonstrate finer-grained authorization: a user with full access
 can see issues on all repositories, while a user with partial access can only
 see issues on public repositories.
 
+### Kagenti version notes (UI import and AuthBridge)
+
+- **Outbound routes from the UI (Step 5, item 12):** The API must write `authproxy-routes`
+  `routes.yaml` as a **YAML list** of route objects (same shape as
+  [k8s/configmaps.yaml](k8s/configmaps.yaml)). Older Kagenti backends wrapped routes in a
+  top-level `routes:` **map**, which **AuthProxy go-processor cannot parse**, so ext_proc
+  never starts, Envoy returns **500** through the Service, and the UI shows **Agent card not
+  available**. Use a build that includes [kagenti/kagenti#1194](https://github.com/kagenti/kagenti/pull/1194)
+  ([#1195](https://github.com/kagenti/kagenti/issues/1195)), or use **Step 2 Option B**
+  (`kubectl apply -f demos/github-issue/k8s/configmaps.yaml`) and skip adding duplicate
+  routes in the UI.
+
+- **Finalize after Shipwright:** If the build succeeds but the agent **Deployment never
+  appears** and backend logs show **403** on ConfigMaps, upgrade the Helm chart to a
+  release that includes [kagenti/kagenti#1192](https://github.com/kagenti/kagenti/pull/1192)
+  ([#1191](https://github.com/kagenti/kagenti/issues/1191)).
+
 ---
 
 ## Step 1: Configure Keycloak
@@ -170,15 +187,22 @@ timeouts. No manual secret creation is needed for this demo.
 >   --dry-run=client -o yaml | kubectl apply -f -
 > ```
 
-Apply the demo-specific ConfigMaps — the `authproxy-routes` ConfigMap
-configures per-route token exchange (target audience and scopes for the
-`github-tool` host), and `authbridge-config` sets the agent's SPIFFE ID for
-inbound audience validation:
+The `authproxy-routes` ConfigMap (outbound routing rules for token exchange)
+can be configured in two ways:
+
+**Option A (recommended): Via the Kagenti UI** — configure outbound routing
+rules directly during agent import in Step 5 (item 12). No manual ConfigMap
+creation needed. Requires a Kagenti backend that writes list-shaped `routes.yaml`
+(see [Kagenti version notes](#kagenti-version-notes-ui-import-and-authbridge) above);
+otherwise use Option B or upgrade.
+
+**Option B: Via kubectl** — apply the demo-specific ConfigMap that configures
+per-route token exchange (target audience and scopes for the `github-tool` host):
 
 ```bash
 cd AuthBridge
 
-# Apply demo ConfigMaps (authbridge-config and authproxy-routes)
+# Apply demo ConfigMaps (authproxy-routes)
 kubectl apply -f demos/github-issue/k8s/configmaps.yaml
 ```
 
@@ -216,17 +240,18 @@ kubectl create secret generic github-tool-secrets -n team1 \
 
 4. Under **Source Code** select:
    - **Git Repository URL**: `https://github.com/kagenti/agent-examples`
-   - **Branch or Tag**: `main`
-   - **Example Tools**: `GitHub Tool`
+   - **Git Branch or Tag**: `main`
+   - **Select Tool**: `GitHub Tool`
    - **Source Subfolder**: `mcp/github_tool`
 
 5. **Workload Type** select `Deployment`
 
 6. Set **MCP Transport Protocol** to `streamable HTTP`
 
-7. Make sure **Enable AuthBridge sidecar injection** is **unchecked**.
+7. **Enable AuthBridge sidecar injection** is unchecked by default for tools.
+   Leave it unchecked.
 
-8. Make sure **Enable SPIRE identity (spiffe-helper sidecar)** is **unchecked**.
+8. **Enable SPIRE identity (spiffe-helper sidecar)** should be **unchecked**.
 
    > The GitHub tool does not need AuthBridge sidecars — it validates incoming tokens
    > directly using its own JWKS logic. Injecting sidecars would cause a port 9090
@@ -279,9 +304,9 @@ kubectl run test-mcp --image=curlimages/curl -n team1 --restart=Never --rm -it -
 
 4. Under **Source Repository** select:
    - **Git Repository URL**: `https://github.com/kagenti/agent-examples`
-   - **Git Branch**: `main`
-   - **Select Example**: `Git Issue Agent`
-   - **Source Path**: `a2a/git_issue_agent`
+   - **Git Branch or Tag**: `main`
+   - **Select Agent**: `Git Issue Agent`
+   - **Source Subfolder**: `a2a/git_issue_agent`
 
 5. **Protocol**: `A2A`
 
@@ -289,9 +314,11 @@ kubectl run test-mcp --image=curlimages/curl -n team1 --restart=Never --rm -it -
 
 7. **Workload Type** select `Deployment`.
 
-8. Make sure **Enable AuthBridge sidecar injection** is checked.
+8. **Enable AuthBridge sidecar injection** is checked by default for agents.
+   Leave it checked.
 
-9. Make sure **Enable SPIRE identity (spiffe-helper sidecar)** is checked.
+9. **Enable SPIRE identity (spiffe-helper sidecar)** is checked by default.
+   Leave it checked.
 
 10. Under **Port Configuration**, set **Service Port** to `8080` and **Target Port** to `8000`
 
@@ -314,7 +341,31 @@ kubectl run test-mcp --image=curlimages/curl -n team1 --restart=Never --rm -it -
    >   --from-literal=apikey="<YOUR_OPENAI_API_KEY>"
    > ```
 
-12. Click **Build & Deploy Agent**.
+12. Expand **Outbound Routing Rules** and add a route for the GitHub tool:
+
+    | Host | Target Audience | Token Scopes |
+    |------|----------------|--------------|
+    | `github-tool-mcp` | `github-tool` | `openid github-tool-aud github-full-access` |
+
+    This tells AuthBridge to exchange tokens when the agent calls the GitHub
+    tool service, requesting the correct audience and scopes for access control.
+
+    > **Note:** This replaces the manual `kubectl apply` of `authproxy-routes`
+    > ConfigMap from Step 2. If you already applied the ConfigMap in Step 2,
+    > you can skip this — the UI-created routes will merge with existing ones.
+
+    > **Troubleshooting:** If **Outbound Routing Rules** is missing, stays collapsed,
+    > or does not respond when you click it, your Kagenti UI build may not include this
+    > control yet. Use **Step 2, Option B** instead:
+    > `kubectl apply -f demos/github-issue/k8s/configmaps.yaml` from the `AuthBridge`
+    > directory (same host, audience, and scopes as the table above). Then continue
+    > with item 13. Confirm **Enable AuthBridge sidecar injection** (item 8) is still
+    > checked before deploying.
+
+13. **(Ollama only)** If using Ollama, expand **AuthBridge Advanced Configuration**
+    and enter `11434` in the **Outbound Ports to Exclude** field.
+
+14. Click **Build & Deploy Agent**.
 
 Wait for the Shipwright build to complete and the deployment to become ready.
 
@@ -449,8 +500,10 @@ AuthBridge's `proxy-init` init container redirects traffic through Envoy. By
 default, only port 8080 (Keycloak) is excluded. Ollama traffic on port 11434
 gets intercepted, which corrupts LLM streaming responses.
 
-**Fix:** Add the `kagenti.io/outbound-ports-exclude` annotation to the
-deployment so `proxy-init` skips Ollama's port:
+If you set the **Outbound Ports to Exclude** field to `11434` during import
+(Step 5, item 13), this is already handled and no patch is needed.
+
+Otherwise, add the annotation after deployment:
 
 ```bash
 kubectl patch deployment git-issue-agent -n team1 --type=merge -p='
@@ -496,6 +549,16 @@ OPENAI_API_KEY=sk-...
    the `/.well-known/*` bypass is working).
 5. Use the **Chat** panel to send a message, e.g. "List 10 open issues in kagenti/kagenti repo".
 6. The agent should respond with a list of GitHub issues.
+
+> **Intermittent short responses:** Sometimes the model returns only a CrewAI-style
+> planning line (e.g. `Thought: … Action: list_issues Action Input: …`) and stops
+> **before** the GitHub MCP tool runs, so you do not get a real issue list. This is
+> **not** Kagenti UI caching or streaming truncation—the same text can appear from
+> `message/send` in [Step 9d](#9d-end-to-end-test-with-valid-token). **Workaround for
+> the demo:** send the same prompt again (in the UI or via `curl`) a few times until
+> you see a full answer. OpenAI models usually behave more consistently than local
+> Ollama for tool use; see [agent-examples#173](https://github.com/kagenti/agent-examples/issues/173).
+> Deeper diagnosis: [Partial response (Thought and Action only)](#partial-response-thought-and-action-only-no-issue-list).
 
 > **Troubleshooting:** If UI chat returns a `401`, verify that both the UI and
 > AuthBridge are configured against the same `kagenti` realm. You can also use
@@ -615,6 +678,11 @@ curl -s --max-time 300 \
     }
   }' | jq
 ```
+
+> **Same intermittent behavior as UI chat:** If `jq` shows an artifact whose text is
+> only `Thought:` / `Action:` / `Action Input:` (no issue list or `Final Answer:`),
+> the run likely ended before the MCP tool executed. Run the same `curl` again a few
+> times, or see [Partial response (Thought and Action only)](#partial-response-thought-and-action-only-no-issue-list).
 
 Exit the pod when done:
 
@@ -873,6 +941,54 @@ kubectl delete pod test-client -n team1 --ignore-not-found
 ---
 
 ## Troubleshooting
+
+### Agent card not available in the UI
+
+**Symptom:** The catalog shows *Agent card not available*; HTTP through the agent
+Service returns **500** (often with `server: envoy`); curling
+`/.well-known/agent-card.json` or `/.well-known/agent.json` from the **agent**
+container on port **8000** still works.
+
+**Cause:** Commonly **go-processor** failed to load `authproxy-routes` (invalid YAML
+shape) and never serves ext_proc, so Envoy cannot complete the request.
+
+**Diagnose:**
+
+```bash
+kubectl logs deployment/git-issue-agent -n team1 -c envoy-proxy 2>&1 | grep -E "failed to load routes|unmarshal"
+kubectl get configmap authproxy-routes -n team1 -o jsonpath='{.data.routes\.yaml}{"\n"}'
+```
+
+If logs mention `cannot unmarshal !!map into []resolver.yamlRoute`, the file should be a
+**list** starting with `- host:` (not a `routes:` map). Match the `routes.yaml` block in
+[k8s/configmaps.yaml](k8s/configmaps.yaml), apply it, then restart:
+
+```bash
+kubectl rollout restart deployment/git-issue-agent -n team1
+```
+
+Longer term, upgrade the Kagenti backend per [kagenti/kagenti#1194](https://github.com/kagenti/kagenti/pull/1194).
+
+### Partial response: Thought and Action only (no issue list)
+
+**Symptom:** Chat or `message/send` returns text like
+`Thought: … Action: list_issues Action Input: {"owner":"kagenti",…}` but no formatted
+issue list or `Final Answer:`.
+
+**Cause:** The [git issue agent](https://github.com/kagenti/agent-examples/tree/main/a2a/git_issue_agent)
+(CrewAI + MCP) occasionally completes a turn after the model emits a plan **without**
+successfully executing the GitHub tool. The GitHub tool log may show `tools/list` (and
+`initialize`) but **no** `tools/call` / `list_issues` for that attempt.
+
+**Demo workaround:** Repeat the same prompt or `curl` a few times until the artifact
+contains a full answer. Prefer OpenAI over Ollama for stable tool calling when possible
+([agent-examples#173](https://github.com/kagenti/agent-examples/issues/173)).
+
+**Optional check** (after a bad run, adjust time window as needed):
+
+```bash
+kubectl logs deployment/github-tool -n team1 --since=5m | grep -E 'tools/list|tools/call|list_issues|Processing request'
+```
 
 ### Invalid Client or Invalid Client Credentials
 

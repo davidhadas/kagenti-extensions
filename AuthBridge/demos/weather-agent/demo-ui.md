@@ -130,9 +130,10 @@ inbound JWT validation works with signature and issuer checks alone.
 
 6. Set **MCP Transport Protocol** to `streamable HTTP`.
 
-7. Make sure **Enable AuthBridge sidecar injection** is **unchecked**.
+7. **Enable AuthBridge sidecar injection** is unchecked by default for tools.
+   Leave it unchecked.
 
-8. Make sure **Enable SPIRE identity (spiffe-helper sidecar)** is **unchecked**.
+8. **Enable SPIRE identity (spiffe-helper sidecar)** should be **unchecked**.
 
    > The weather tool is a simple MCP server calling a public weather API. It
    > does not need AuthBridge sidecars or token validation.
@@ -159,9 +160,9 @@ kubectl get pods -n team1 | grep weather-tool
 
 4. Under **Source Repository** select:
    - **Git Repository URL**: `https://github.com/kagenti/agent-examples`
-   - **Git Branch**: `main`
-   - **Select Example**: `Weather Service Agent`
-   - **Source Path**: `a2a/weather_service`
+   - **Git Branch or Tag**: `main`
+   - **Select Agent**: `Weather Service Agent`
+   - **Source Subfolder**: `a2a/weather_service`
 
 5. **Protocol**: `A2A`
 
@@ -169,9 +170,11 @@ kubectl get pods -n team1 | grep weather-tool
 
 7. **Workload Type** select `Deployment`.
 
-8. Make sure **Enable AuthBridge sidecar injection** is checked.
+8. **Enable AuthBridge sidecar injection** is checked by default for agents.
+   Leave it checked.
 
-9. Make sure **Enable SPIRE identity (spiffe-helper sidecar)** is checked.
+9. **Enable SPIRE identity (spiffe-helper sidecar)** is checked by default.
+   Leave it checked.
 
 10. Under **Port Configuration**, set **Service Port** to `8080` and **Target Port** to `8000`
 
@@ -200,7 +203,13 @@ kubectl get pods -n team1 | grep weather-tool
     > kubectl delete secret openai-secret -n team1
     > ```
 
-12. Click **Build & Deploy Agent**.
+12. **(Ollama only)** If using Ollama as your LLM provider, expand
+    **AuthBridge Advanced Configuration** and enter `11434` in the
+    **Outbound Ports to Exclude** field. This prevents AuthBridge from
+    intercepting traffic to Ollama on the host machine. OpenAI users can
+    skip this — HTTPS traffic passes through via TLS passthrough.
+
+13. Click **Build & Deploy Agent**.
 
 Wait for the Shipwright build to complete and the deployment to become ready.
 
@@ -315,8 +324,10 @@ AuthBridge's `proxy-init` init container redirects traffic through Envoy. By
 default, only port 8080 (Keycloak) is excluded. Ollama traffic on port 11434
 gets intercepted, which corrupts LLM streaming responses.
 
-**Fix:** Add the `kagenti.io/outbound-ports-exclude` annotation to the
-deployment so `proxy-init` skips Ollama's port:
+If you set the **Outbound Ports to Exclude** field to `11434` during import
+(Step 2, item 12), this is already handled and no patch is needed.
+
+Otherwise, add the annotation after deployment:
 
 ```bash
 kubectl patch deployment weather-service -n team1 --type=merge -p='
@@ -560,6 +571,15 @@ creates the correct defaults) and restart the agent:
 ```bash
 kubectl rollout restart deployment/weather-service -n team1
 ```
+
+### Agent card not available in the UI
+
+This demo normally does not create `authproxy-routes`. If the UI still cannot load the
+agent card while the agent container responds on port 8000, Envoy’s ext_proc path is
+likely broken—often due to **invalid `authproxy-routes` YAML** left over from another
+workflow or namespace reuse. Follow **Agent card not available** in the
+[GitHub Issue Agent UI demo](../github-issue/demo-ui.md#agent-card-not-available-in-the-ui)
+(check `envoy-proxy` logs and fix or remove `authproxy-routes` as described there).
 
 ### Agent Pod Not Starting (4/4 containers)
 
