@@ -550,6 +550,16 @@ OPENAI_API_KEY=sk-...
 5. Use the **Chat** panel to send a message, e.g. "List 10 open issues in kagenti/kagenti repo".
 6. The agent should respond with a list of GitHub issues.
 
+> **Intermittent short responses:** Sometimes the model returns only a CrewAI-style
+> planning line (e.g. `Thought: … Action: list_issues Action Input: …`) and stops
+> **before** the GitHub MCP tool runs, so you do not get a real issue list. This is
+> **not** Kagenti UI caching or streaming truncation—the same text can appear from
+> `message/send` in [Step 9d](#9d-end-to-end-test-with-valid-token). **Workaround for
+> the demo:** send the same prompt again (in the UI or via `curl`) a few times until
+> you see a full answer. OpenAI models usually behave more consistently than local
+> Ollama for tool use; see [agent-examples#173](https://github.com/kagenti/agent-examples/issues/173).
+> Deeper diagnosis: [Partial response (Thought and Action only)](#partial-response-thought-and-action-only-no-issue-list).
+
 > **Troubleshooting:** If UI chat returns a `401`, verify that both the UI and
 > AuthBridge are configured against the same `kagenti` realm. You can also use
 > [Step 9: Test via CLI](#step-9-test-via-cli) to test the full AuthBridge flow
@@ -668,6 +678,11 @@ curl -s --max-time 300 \
     }
   }' | jq
 ```
+
+> **Same intermittent behavior as UI chat:** If `jq` shows an artifact whose text is
+> only `Thought:` / `Action:` / `Action Input:` (no issue list or `Final Answer:`),
+> the run likely ended before the MCP tool executed. Run the same `curl` again a few
+> times, or see [Partial response (Thought and Action only)](#partial-response-thought-and-action-only-no-issue-list).
 
 Exit the pod when done:
 
@@ -953,6 +968,27 @@ kubectl rollout restart deployment/git-issue-agent -n team1
 ```
 
 Longer term, upgrade the Kagenti backend per [kagenti/kagenti#1194](https://github.com/kagenti/kagenti/pull/1194).
+
+### Partial response: Thought and Action only (no issue list)
+
+**Symptom:** Chat or `message/send` returns text like
+`Thought: … Action: list_issues Action Input: {"owner":"kagenti",…}` but no formatted
+issue list or `Final Answer:`.
+
+**Cause:** The [git issue agent](https://github.com/kagenti/agent-examples/tree/main/a2a/git_issue_agent)
+(CrewAI + MCP) occasionally completes a turn after the model emits a plan **without**
+successfully executing the GitHub tool. The GitHub tool log may show `tools/list` (and
+`initialize`) but **no** `tools/call` / `list_issues` for that attempt.
+
+**Demo workaround:** Repeat the same prompt or `curl` a few times until the artifact
+contains a full answer. Prefer OpenAI over Ollama for stable tool calling when possible
+([agent-examples#173](https://github.com/kagenti/agent-examples/issues/173)).
+
+**Optional check** (after a bad run, adjust time window as needed):
+
+```bash
+kubectl logs deployment/github-tool -n team1 --since=5m | grep -E 'tools/list|tools/call|list_issues|Processing request'
+```
 
 ### Invalid Client or Invalid Client Credentials
 
