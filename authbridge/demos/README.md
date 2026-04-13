@@ -94,7 +94,7 @@ kubectl port-forward service/keycloak-service -n keycloak 8080:8080
 Demos that configure Keycloak need a Python virtual environment:
 
 ```bash
-cd AuthBridge
+cd authbridge
 
 python -m venv venv
 source venv/bin/activate

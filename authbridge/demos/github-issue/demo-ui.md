@@ -145,7 +145,7 @@ kubectl port-forward service/keycloak-service -n keycloak 8080:8080
 ### Run the setup script
 
 ```bash
-cd AuthBridge
+cd authbridge
 
 # Create virtual environment (if not already done)
 python -m venv venv
@@ -200,7 +200,7 @@ otherwise use Option B or upgrade.
 per-route token exchange (target audience and scopes for the `github-tool` host):
 
 ```bash
-cd AuthBridge
+cd authbridge
 
 # Apply demo ConfigMaps (authproxy-routes)
 kubectl apply -f demos/github-issue/k8s/configmaps.yaml
@@ -362,7 +362,7 @@ Expected:
     > **Troubleshooting:** If **Outbound Routing Rules** is missing, stays collapsed,
     > or does not respond when you click it, your Kagenti UI build may not include this
     > control yet. Use **Step 2, Option B** instead:
-    > `kubectl apply -f demos/github-issue/k8s/configmaps.yaml` from the `AuthBridge`
+    > `kubectl apply -f demos/github-issue/k8s/configmaps.yaml` from the `authbridge`
     > directory (same host, audience, and scopes as the table above). Then continue
     > with item 13. Confirm **Enable AuthBridge sidecar injection** (item 8) is still
     > checked before deploying.
