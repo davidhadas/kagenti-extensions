@@ -132,7 +132,7 @@ sequenceDiagram
 | `KEYCLOAK_ADMIN_PASSWORD` | Yes | Admin password | `admin` |
 | `KEYCLOAK_TOKEN_EXCHANGE_ENABLED` | No | Enable token exchange for client (default: `true`) | `true` |
 | `KEYCLOAK_CLIENT_REGISTRATION_ENABLED` | No | Enable/disable registration (default: `true`) | `true` |
-| `SECRET_FILE_PATH` | No | Path to write client secret (default: `/shared/secret.txt`) | `/shared/client-secret.txt` |
+| `SECRET_FILE_PATH` | No | Path to write client secret (default: `/shared/client-secret.txt`) | `/shared/client-secret.txt` |
 
 **Note:** `KEYCLOAK_URL` and `KEYCLOAK_REALM` can be automatically derived from `TOKEN_URL` if not explicitly provided. For example:
 - `TOKEN_URL`: `http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token`

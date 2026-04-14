@@ -2,7 +2,7 @@
 
 This guide provides step-by-step instructions for running the AuthBridge demo.
 
-> **📘 New to AuthBridge?** See the [README](./README.md) for an overview of what AuthBridge does and how it works.
+> **📘 New to AuthBridge?** See the [AuthBridge README](../../README.md) for an overview of what AuthBridge does and how it works.
 
 ## Demo Components
 
@@ -280,7 +280,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 
 # Run setup script
-python setup_keycloak.py
+python demos/single-target/setup_keycloak.py
 ```
 
 The `setup_keycloak` script creates:
@@ -718,6 +718,6 @@ kubectl delete namespace authbridge
 
 ## Next Steps
 
-- See [AuthProxy Documentation](authproxy/README.md) for details on token validation and exchange
-- See [Client Registration Documentation](client-registration/README.md) for details on automatic Keycloak registration
-- See [README](./README.md) for architecture overview
+- See [AuthProxy Documentation](../../authproxy/README.md) for details on token validation and exchange
+- See [Client Registration Documentation](../../client-registration/README.md) for details on automatic Keycloak registration
+- See [AuthBridge README](../../README.md) for architecture overview

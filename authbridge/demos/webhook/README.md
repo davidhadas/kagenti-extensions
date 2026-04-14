@@ -32,7 +32,7 @@ Combined mode reduces per-pod overhead from 3 long-running sidecars to 1, simpli
 ┌────────────────────────────────────────────────────────────────────┐
 │                        Agent Pod                                   │
 │  ┌─────────────┐  ┌──────────────┐  ┌────────────────────────────┐ │
-│  │   agent     │  │spiffe-helper │  │keycloak-client-registration│ |
+│  │   agent     │  │spiffe-helper │  │kagenti-client-registration │ |
 │  │ (your app)  │  │              │  │                            │ │
 │  └──────┬──────┘  └──────────────┘  └────────────────────────────┘ │
 │         │                                                          │

@@ -288,7 +288,7 @@ kubectl logs <pod-name> -c envoy-proxy
 ## Related Documentation
 
 - [AuthBridge](../README.md) - Complete AuthBridge overview with token exchange flow
-- [AuthBridge Demo](../demo.md) - Step-by-step demo instructions
+- [AuthBridge Demos](../demos/README.md) - Demo scenarios and getting started
 - [Client Registration](../client-registration/README.md) - Automatic Keycloak client registration with SPIFFE
 - [OAuth 2.0 Token Exchange (RFC 8693)](https://datatracker.ietf.org/doc/html/rfc8693)
 - [Envoy External Processing](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/ext_proc_filter)
