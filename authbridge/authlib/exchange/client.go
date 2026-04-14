@@ -15,10 +15,11 @@ import (
 
 // ExchangeRequest contains the parameters for a token exchange.
 type ExchangeRequest struct {
-	SubjectToken string
-	Audience     string
-	Scopes       string
-	ActorToken   string // optional, RFC 8693 Section 4.1
+	SubjectToken  string
+	Audience      string
+	Scopes        string
+	ActorToken    string // optional, RFC 8693 Section 4.1
+	TokenEndpoint string // optional per-request override of the client's tokenURL
 }
 
 // ExchangeResponse contains the result of a successful token exchange.
@@ -81,7 +82,11 @@ func (c *Client) Exchange(ctx context.Context, req *ExchangeRequest) (*ExchangeR
 		return nil, fmt.Errorf("applying client auth: %w", err)
 	}
 
-	return c.doTokenRequest(ctx, form)
+	tokenURL := c.tokenURL
+	if req.TokenEndpoint != "" {
+		tokenURL = req.TokenEndpoint
+	}
+	return c.doTokenRequest(ctx, tokenURL, form)
 }
 
 // ClientCredentials performs a client credentials grant.
@@ -97,11 +102,11 @@ func (c *Client) ClientCredentials(ctx context.Context, scopes string) (*Exchang
 		return nil, fmt.Errorf("applying client auth: %w", err)
 	}
 
-	return c.doTokenRequest(ctx, form)
+	return c.doTokenRequest(ctx, c.tokenURL, form)
 }
 
-func (c *Client) doTokenRequest(ctx context.Context, form url.Values) (*ExchangeResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.tokenURL,
+func (c *Client) doTokenRequest(ctx context.Context, tokenURL string, form url.Values) (*ExchangeResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL,
 		strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
