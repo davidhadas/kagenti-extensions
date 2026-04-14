@@ -1,0 +1,130 @@
+// Package extauthz implements an Envoy ext_authz gRPC unary listener.
+// Used by waypoint mode where both inbound validation and outbound exchange
+// happen in a single Check() call.
+package extauthz
+
+import (
+	"context"
+	"encoding/json"
+
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
+	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"google.golang.org/grpc/codes"
+
+	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
+
+	authpkg "github.com/kagenti/kagenti-extensions/authbridge/authlib/auth"
+)
+
+// Server implements the Envoy ext_authz Authorization gRPC service.
+type Server struct {
+	authv3.UnimplementedAuthorizationServer
+	Auth *authpkg.Auth
+}
+
+// Check handles a single ext_authz authorization request.
+func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.CheckResponse, error) {
+	httpReq := req.GetAttributes().GetRequest().GetHttp()
+	if httpReq == nil {
+		return denied(codes.InvalidArgument, 400, "missing HTTP request attributes"), nil
+	}
+
+	headers := httpReq.GetHeaders()
+	host := headers[":authority"]
+	if host == "" {
+		host = headers["host"]
+	}
+	authHeader := headers["authorization"]
+	path := httpReq.GetPath()
+
+	// Derive audience from destination host (waypoint pattern)
+	audience := ServiceNameFromHost(host)
+
+	// Inbound validation
+	inResult := s.Auth.HandleInbound(ctx, authHeader, path, audience)
+	if inResult.Action == authpkg.ActionDeny {
+		return denied(codes.Unauthenticated, inResult.DenyStatus, inResult.DenyReason), nil
+	}
+
+	// Outbound exchange
+	outResult := s.Auth.HandleOutbound(ctx, authHeader, host)
+	switch outResult.Action {
+	case authpkg.ActionReplaceToken:
+		return allowedWithToken(outResult.Token), nil
+	case authpkg.ActionDeny:
+		return denied(codes.PermissionDenied, outResult.DenyStatus, outResult.DenyReason), nil
+	default:
+		return allowed(), nil
+	}
+}
+
+// ServiceNameFromHost extracts the service name from a Kubernetes host.
+// "auth-target-service.authbridge.svc.cluster.local:8081" → "auth-target-service"
+func ServiceNameFromHost(host string) string {
+	// Strip port
+	for i, c := range host {
+		if c == ':' {
+			host = host[:i]
+			break
+		}
+	}
+	// Take first DNS label
+	for i, c := range host {
+		if c == '.' {
+			return host[:i]
+		}
+	}
+	return host
+}
+
+func denied(code codes.Code, httpStatus int, msg string) *authv3.CheckResponse {
+	body, _ := json.Marshal(map[string]string{"error": msg})
+	return &authv3.CheckResponse{
+		Status: &rpcstatus.Status{
+			Code:    int32(code),
+			Message: msg,
+		},
+		HttpResponse: &authv3.CheckResponse_DeniedResponse{
+			DeniedResponse: &authv3.DeniedHttpResponse{
+				Status: &typev3.HttpStatus{
+					Code: typev3.StatusCode(httpStatus),
+				},
+				Body: string(body),
+				Headers: []*corev3.HeaderValueOption{
+					{
+						Header: &corev3.HeaderValue{
+							Key:   "Content-Type",
+							Value: "application/json",
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func allowed() *authv3.CheckResponse {
+	return &authv3.CheckResponse{
+		Status:       &rpcstatus.Status{Code: int32(codes.OK)},
+		HttpResponse: &authv3.CheckResponse_OkResponse{OkResponse: &authv3.OkHttpResponse{}},
+	}
+}
+
+func allowedWithToken(token string) *authv3.CheckResponse {
+	return &authv3.CheckResponse{
+		Status: &rpcstatus.Status{Code: int32(codes.OK)},
+		HttpResponse: &authv3.CheckResponse_OkResponse{
+			OkResponse: &authv3.OkHttpResponse{
+				Headers: []*corev3.HeaderValueOption{
+					{
+						Header: &corev3.HeaderValue{
+							Key:   "authorization",
+							Value: "Bearer " + token,
+						},
+					},
+				},
+			},
+		},
+	}
+}
