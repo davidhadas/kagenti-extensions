@@ -462,13 +462,17 @@ func buildInboundHeaders(path, authHeader string) *core.HeaderMap {
 	return &core.HeaderMap{Headers: headers}
 }
 
-// isDenied401 returns true if the response is an ImmediateResponse with 401 status.
-func isDenied401(resp *v3.ProcessingResponse) bool {
+// isDenied401 returns true if the response is an ImmediateResponse with 401 status
+// and the body contains the expected substring.
+func isDenied401(resp *v3.ProcessingResponse, msgSubstr string) bool {
 	ir, ok := resp.Response.(*v3.ProcessingResponse_ImmediateResponse)
 	if !ok {
 		return false
 	}
-	return ir.ImmediateResponse.Status.Code == typev3.StatusCode_Unauthorized
+	if ir.ImmediateResponse.Status.Code != typev3.StatusCode_Unauthorized {
+		return false
+	}
+	return strings.Contains(string(ir.ImmediateResponse.Body), msgSubstr)
 }
 
 // isForwarded returns true if the response forwards the request (not an ImmediateResponse).
@@ -527,7 +531,9 @@ func setupTestJWKS(t *testing.T) (jwk.Key, func()) {
 	// Serve JWKS via HTTP
 	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(keySet)
+		if err := json.NewEncoder(w).Encode(keySet); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
 	}))
 
 	// Initialize the global jwksCache
@@ -610,31 +616,29 @@ func TestHandleInbound_NotConfigured(t *testing.T) {
 }
 
 func TestHandleInbound_MissingAuthHeader(t *testing.T) {
-	privKey, cleanup := setupTestJWKS(t)
+	_, cleanup := setupTestJWKS(t)
 	defer cleanup()
-	_ = privKey
 
 	p := &processor{}
 	headers := buildInboundHeaders("/api/data", "")
 	resp := p.handleInbound(headers)
 
-	if !isDenied401(resp) {
-		t.Error("expected 401 for missing Authorization header")
+	if !isDenied401(resp, "missing Authorization header") {
+		t.Error("expected 401 with 'missing Authorization header'")
 	}
 }
 
 func TestHandleInbound_MalformedAuthHeader(t *testing.T) {
-	privKey, cleanup := setupTestJWKS(t)
+	_, cleanup := setupTestJWKS(t)
 	defer cleanup()
-	_ = privKey
 
 	p := &processor{}
 	// Auth header without "Bearer " prefix
 	headers := buildInboundHeaders("/api/data", "Basic dXNlcjpwYXNz")
 	resp := p.handleInbound(headers)
 
-	if !isDenied401(resp) {
-		t.Error("expected 401 for non-Bearer Authorization header")
+	if !isDenied401(resp, "invalid Authorization header format") {
+		t.Error("expected 401 with 'invalid Authorization header format'")
 	}
 }
 
@@ -654,8 +658,8 @@ func TestHandleInbound_InvalidSignature(t *testing.T) {
 	headers := buildInboundHeaders("/api/data", "Bearer "+badToken)
 	resp := p.handleInbound(headers)
 
-	if !isDenied401(resp) {
-		t.Error("expected 401 for JWT signed with wrong key")
+	if !isDenied401(resp, "token validation failed") {
+		t.Error("expected 401 with 'token validation failed' for JWT signed with wrong key")
 	}
 }
 
@@ -670,8 +674,8 @@ func TestHandleInbound_WrongIssuer(t *testing.T) {
 	headers := buildInboundHeaders("/api/data", "Bearer "+token)
 	resp := p.handleInbound(headers)
 
-	if !isDenied401(resp) {
-		t.Error("expected 401 for JWT with wrong issuer")
+	if !isDenied401(resp, "invalid issuer") {
+		t.Error("expected 401 with 'invalid issuer'")
 	}
 }
 
@@ -686,8 +690,8 @@ func TestHandleInbound_WrongAudience(t *testing.T) {
 	headers := buildInboundHeaders("/api/data", "Bearer "+token)
 	resp := p.handleInbound(headers)
 
-	if !isDenied401(resp) {
-		t.Error("expected 401 for JWT with wrong audience")
+	if !isDenied401(resp, "invalid audience") {
+		t.Error("expected 401 with 'invalid audience'")
 	}
 }
 
@@ -710,10 +714,37 @@ func TestHandleInbound_ValidToken(t *testing.T) {
 	}
 }
 
-func TestHandleInbound_BypassPath(t *testing.T) {
+func TestHandleInbound_ExpiredToken(t *testing.T) {
 	privKey, cleanup := setupTestJWKS(t)
 	defer cleanup()
-	_ = privKey
+
+	token, err := jwt.NewBuilder().
+		Issuer(inboundIssuer).
+		Audience([]string{expectedAudience}).
+		Subject("test-subject").
+		IssuedAt(time.Now().Add(-2 * time.Hour)).
+		Expiration(time.Now().Add(-1 * time.Hour)).
+		Build()
+	if err != nil {
+		t.Fatalf("failed to build expired JWT: %v", err)
+	}
+	signed, err := jwt.Sign(token, jwt.WithKey(jwa.RS256, privKey))
+	if err != nil {
+		t.Fatalf("failed to sign expired JWT: %v", err)
+	}
+
+	p := &processor{}
+	headers := buildInboundHeaders("/api/data", "Bearer "+string(signed))
+	resp := p.handleInbound(headers)
+
+	if !isDenied401(resp, "token validation failed") {
+		t.Error("expected 401 with 'token validation failed' for expired token")
+	}
+}
+
+func TestHandleInbound_BypassPath(t *testing.T) {
+	_, cleanup := setupTestJWKS(t)
+	defer cleanup()
 
 	p := &processor{}
 	// /.well-known/* is a default bypass path — no token needed
