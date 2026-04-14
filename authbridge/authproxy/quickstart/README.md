@@ -36,7 +36,7 @@ Let's clone the assets locally:
 
 ```bash
 git clone git@github.com:kagenti/kagenti-extensions.git
-cd kagent-extensions/authbridge/authproxy
+cd kagenti-extensions/authbridge/authproxy
 ```
 
 We can use the following `make` commands to build and load the images to the Kind cluster:

@@ -37,7 +37,7 @@ kagenti-extensions/
 └── CLAUDE.md                 # This file
 ```
 
-## The Two Major Components
+## Major Components
 
 ### 1. AuthProxy (Go)
 
