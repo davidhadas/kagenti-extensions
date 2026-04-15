@@ -55,7 +55,8 @@ func (c *CachedActorTokenSource) FetchToken(ctx context.Context) (string, error)
 }
 
 // SetTTL updates the cache expiry based on the token's expires_in value.
-// Called by the auth layer after a successful client-credentials grant.
+// TODO: Wire from client-credentials response in HandleOutbound when actor token
+// caching is enabled. Currently unused — the 5-minute default applies.
 func (c *CachedActorTokenSource) SetTTL(expiresIn time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
