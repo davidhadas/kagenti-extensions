@@ -4,7 +4,7 @@ This file provides context for Claude (AI assistant) when working with the `kage
 
 ## AI Assistant Instructions
 
-- **No attribution** in commits, PR bodies, or issues — do not add "Co-Authored-By: Claude", "Generated with Claude Code", or any AI attribution.
+- **Use `Assisted-By` for attribution** — never add `Co-Authored-By`, `Generated with Claude Code`, or similar trailers. See [Commit Attribution Policy](#commit-attribution-policy) below.
 
 ## Repository Overview
 
@@ -288,7 +288,15 @@ Instead, use `Assisted-By` to acknowledge AI assistance without inflating contri
 
 Never add `Co-authored-by`, `Made-with`, or similar trailers that GitHub parses as co-authorship.
 
-A `commit-msg` hook in `scripts/hooks/commit-msg` enforces this automatically.
+### PR Bodies
+
+PR descriptions should end with the same `Assisted-By` trailer:
+
+    Assisted-By: Claude (Anthropic AI) <noreply@anthropic.com>
+
+Do not use `🤖 Generated with [Claude Code](https://claude.com/claude-code)` or similar.
+
+A `commit-msg` hook in `scripts/hooks/commit-msg` enforces this automatically for commits.
 Install it via pre-commit:
 
 ```sh
