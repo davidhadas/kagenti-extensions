@@ -15,6 +15,7 @@ import (
 	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
 
 	authpkg "github.com/kagenti/kagenti-extensions/authbridge/authlib/auth"
+	"github.com/kagenti/kagenti-extensions/authbridge/authlib/routing"
 )
 
 // Server implements the Envoy ext_authz Authorization gRPC service.
@@ -39,7 +40,7 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 	path := httpReq.GetPath()
 
 	// Derive audience from destination host (waypoint pattern)
-	audience := ServiceNameFromHost(host)
+	audience := routing.ServiceNameFromHost(host)
 
 	// Inbound validation
 	inResult := s.Auth.HandleInbound(ctx, authHeader, path, audience)
@@ -59,24 +60,6 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 	}
 }
 
-// ServiceNameFromHost extracts the service name from a Kubernetes host.
-// "auth-target-service.authbridge.svc.cluster.local:8081" → "auth-target-service"
-func ServiceNameFromHost(host string) string {
-	// Strip port
-	for i, c := range host {
-		if c == ':' {
-			host = host[:i]
-			break
-		}
-	}
-	// Take first DNS label
-	for i, c := range host {
-		if c == '.' {
-			return host[:i]
-		}
-	}
-	return host
-}
 
 func denied(code codes.Code, httpStatus int, msg string) *authv3.CheckResponse {
 	body, _ := json.Marshal(map[string]string{"error": msg})

@@ -49,23 +49,7 @@ func checkRequest(host, path, authHeader string) *authv3.CheckRequest {
 	}
 }
 
-func TestServiceNameFromHost(t *testing.T) {
-	tests := []struct {
-		host string
-		want string
-	}{
-		{"auth-target-service.authbridge.svc.cluster.local:8081", "auth-target-service"},
-		{"auth-target-service.authbridge.svc.cluster.local", "auth-target-service"},
-		{"auth-target-service:8081", "auth-target-service"},
-		{"auth-target-service", "auth-target-service"},
-		{"simple", "simple"},
-	}
-	for _, tt := range tests {
-		if got := ServiceNameFromHost(tt.host); got != tt.want {
-			t.Errorf("ServiceNameFromHost(%q) = %q, want %q", tt.host, got, tt.want)
-		}
-	}
-}
+// ServiceNameFromHost is tested in routing/hostutil_test.go (shared implementation)
 
 func TestCheck_ValidToken_Exchange(t *testing.T) {
 	exchangeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

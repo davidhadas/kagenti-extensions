@@ -79,6 +79,9 @@ func main() {
 		}
 		httpServers = append(httpServers, startHTTPServer("reverse-proxy", rpSrv.Handler(), cfg.Listener.ReverseProxyAddr))
 		httpServers = append(httpServers, startHTTPServer("forward-proxy", forwardproxy.NewServer(handler).Handler(), cfg.Listener.ForwardProxyAddr))
+
+	default:
+		log.Fatalf("unhandled mode %q", cfg.Mode)
 	}
 
 	// Wait for shutdown signal
@@ -92,6 +95,12 @@ func main() {
 	defer shutdownCancel()
 
 	for _, srv := range grpcServers {
+		// GracefulStop blocks until all RPCs complete. If streams are long-lived
+		// (e.g., ext_proc), fall back to hard Stop after the shutdown timeout.
+		go func(s *grpc.Server) {
+			<-shutdownCtx.Done()
+			s.Stop()
+		}(srv)
 		srv.GracefulStop()
 	}
 	for _, srv := range httpServers {
