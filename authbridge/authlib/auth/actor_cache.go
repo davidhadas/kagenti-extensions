@@ -48,11 +48,9 @@ func (c *CachedActorTokenSource) FetchToken(ctx context.Context) (string, error)
 		return "", err
 	}
 	c.token = token
-	// Default TTL of 5 minutes if the source doesn't provide one.
-	// The actual TTL is set via SetTTL after the client-credentials grant.
-	if c.expiresAt.IsZero() {
-		c.expiresAt = time.Now().Add(5 * time.Minute)
-	}
+	// Always reset expiry on refresh. Default TTL of 5 minutes;
+	// SetTTL can override with the actual expires_in from the grant.
+	c.expiresAt = time.Now().Add(5 * time.Minute)
 	return token, nil
 }
 

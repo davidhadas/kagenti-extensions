@@ -110,14 +110,14 @@ func deriveKeycloakURLs(cfg *Config) {
 
 // deriveJWKSURL derives the JWKS endpoint from TOKEN_URL using Keycloak's convention:
 // .../protocol/openid-connect/token → .../protocol/openid-connect/certs
+// Uses suffix-based replacement to avoid modifying hostnames containing "token".
 func deriveJWKSURL(cfg *Config) {
 	if cfg.Inbound.JWKSURL != "" || cfg.Outbound.TokenURL == "" {
 		return
 	}
-	jwksURL := strings.Replace(cfg.Outbound.TokenURL, "/token", "/certs", 1)
-	if jwksURL != cfg.Outbound.TokenURL {
-		cfg.Inbound.JWKSURL = jwksURL
-		slog.Info("derived jwks_url from token_url", "jwks_url", jwksURL)
+	if strings.HasSuffix(cfg.Outbound.TokenURL, "/token") {
+		cfg.Inbound.JWKSURL = strings.TrimSuffix(cfg.Outbound.TokenURL, "/token") + "/certs"
+		slog.Info("derived jwks_url from token_url", "jwks_url", cfg.Inbound.JWKSURL)
 	}
 }
 

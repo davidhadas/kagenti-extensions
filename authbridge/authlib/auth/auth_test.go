@@ -138,7 +138,8 @@ func newTestExchangeServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			t.Fatal(err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
@@ -301,7 +302,8 @@ func TestHandleOutbound_PerRouteTokenEndpoint(t *testing.T) {
 func TestHandleOutbound_ActorToken(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			t.Fatal(err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 		if got := r.FormValue("actor_token"); got != "actor-jwt" {
 			t.Errorf("actor_token = %q, want actor-jwt", got)
