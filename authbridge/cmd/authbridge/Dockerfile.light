@@ -1,0 +1,32 @@
+# AuthBridge lightweight image — Go binary only, no Envoy.
+# Used for waypoint and proxy-sidecar modes where Envoy is not needed.
+# For envoy-sidecar mode, use the main Dockerfile which includes Envoy.
+#
+# Build context: ./authbridge (needs access to both authlib/ and cmd/authbridge/)
+
+# Stage 1: Build authbridge binary
+FROM golang:1.24-alpine AS builder
+
+RUN apk add --no-cache git
+
+WORKDIR /app
+
+# Copy both modules with Docker-compatible layout
+COPY authlib/ authlib/
+COPY cmd/authbridge/ cmd/authbridge/
+
+ENV GOWORK=off
+RUN cd cmd/authbridge && CGO_ENABLED=0 GOOS=linux go build -o /authbridge . \
+    && chmod 755 /authbridge
+
+# Stage 2: Runtime — UBI9-micro (~24 MB, glibc-compatible)
+FROM registry.access.redhat.com/ubi9/ubi-micro:latest
+
+COPY --from=builder --chmod=755 /authbridge /usr/local/bin/authbridge
+
+USER 1337
+
+# ext_authz/ext_proc (9090), forward proxy (8080), reverse proxy (8081)
+EXPOSE 9090 8080 8081
+
+ENTRYPOINT ["/usr/local/bin/authbridge"]
