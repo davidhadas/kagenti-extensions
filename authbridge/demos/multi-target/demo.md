@@ -56,7 +56,7 @@ make load-images KIND_CLUSTER_NAME=<your-cluster-name>
 ```
 
 This builds:
-- `envoy-with-processor` - Envoy + ext-proc (go-processor with TargetResolver)
+- `authbridge-unified` - Envoy + ext_proc (authbridge with TargetResolver)
 - `demo-app` - Target service that validates JWT audience
 - `auth-proxy` - Auth proxy container
 - `proxy-init` - iptables init container
@@ -182,9 +182,9 @@ The output shows:
 
 1. Agent obtains a token from Keycloak using client credentials (no specific audience)
 2. Agent makes HTTP request to a target service with this token
-3. Envoy intercepts the request and sends headers to the ext-proc (go-processor)
-4. ext-proc resolves the destination host against `routes.yaml` configuration
-5. ext-proc performs OAuth 2.0 Token Exchange (RFC 8693) to get a new token with:
+3. Envoy intercepts the request and sends headers to the ext_proc (authbridge)
+4. ext_proc resolves the destination host against `routes.yaml` configuration
+5. ext_proc performs OAuth 2.0 Token Exchange (RFC 8693) to get a new token with:
    - The target's audience (e.g., `target-alpha`)
    - The target's required scopes (e.g., `openid target-alpha-aud`)
 6. Envoy forwards the request with the exchanged token
