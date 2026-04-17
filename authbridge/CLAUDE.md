@@ -248,11 +248,15 @@ Sidecars communicate through files on shared volumes:
 ```bash
 cd authbridge/authproxy
 
-# Build all images (auth-proxy, demo-app, proxy-init, authbridge-unified)
+# Build demo images (auth-proxy, demo-app, proxy-init)
 make build-images
 
 # Load into Kind cluster
 make load-images                    # Uses KIND_CLUSTER_NAME env var (default: kagenti)
+
+# Build the authbridge-unified sidecar image separately (from authbridge/ context)
+cd .. && podman build -f cmd/authbridge/Dockerfile -t authbridge-unified:latest .
+kind load docker-image authbridge-unified:latest --name kagenti
 
 # Deploy auth-proxy + demo-app
 make deploy

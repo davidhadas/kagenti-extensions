@@ -152,7 +152,7 @@ The webhook watches this ConfigMap for changes and reloads automatically. New po
 | Container to read credentials | `-c envoy-proxy` | `-c authbridge` |
 | Container for Envoy logs | `-c envoy-proxy` | `-c authbridge` |
 | Per-sidecar opt-out labels | Each sidecar can be independently disabled | `spiffeHelper` and `clientRegistration` are passed as flags to the entrypoint; `envoy-proxy` disabled = no combined container |
-| Image | `authbridge-unified` + `spiffe-helper` + `client-registration` | `authbridge-unified` (single image) |
+| Image | `authbridge-unified` + `spiffe-helper` + `client-registration` | `authbridge` (single image) |
 
 ### Per-sidecar control in combined mode
 

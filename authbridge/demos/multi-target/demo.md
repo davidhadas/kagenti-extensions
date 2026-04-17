@@ -56,10 +56,16 @@ make load-images KIND_CLUSTER_NAME=<your-cluster-name>
 ```
 
 This builds:
-- `authbridge-unified` - Envoy + ext_proc (authbridge with TargetResolver)
 - `demo-app` - Target service that validates JWT audience
 - `auth-proxy` - Auth proxy container
 - `proxy-init` - iptables init container
+
+Build the `authbridge-unified` sidecar image separately (from `authbridge/` context):
+
+```bash
+cd authbridge && podman build -f cmd/authbridge/Dockerfile -t authbridge-unified:latest .
+kind load docker-image authbridge-unified:latest --name kagenti
+```
 
 ### 2. Sync Routes with Keycloak
 
