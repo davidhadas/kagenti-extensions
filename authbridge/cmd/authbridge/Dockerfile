@@ -21,14 +21,13 @@ COPY cmd/authbridge/ cmd/authbridge/
 # In Docker the layout is /app/authlib and /app/cmd/authbridge, so the
 # relative path ../../authlib resolves to /app/authlib. Correct.
 ENV GOWORK=off
-RUN cd cmd/authbridge && CGO_ENABLED=0 GOOS=linux go build -o /authbridge . \
-    && chmod 755 /authbridge
+RUN cd cmd/authbridge && CGO_ENABLED=0 GOOS=linux go build -o /authbridge .
 
 # Stage 2: Get Envoy binary
 FROM docker.io/envoyproxy/envoy:v1.37.1 AS envoy-source
 
 # Stage 3: Runtime — UBI9-micro (glibc-compatible, ~24 MB)
-FROM registry.access.redhat.com/ubi9/ubi-micro:latest
+FROM registry.access.redhat.com/ubi9/ubi-micro@sha256:2173487b3b72b1a7b11edc908e9bbf1726f9df46a4f78fd6d19a2bab0a701f38
 
 COPY --from=envoy-source --chmod=755 /usr/local/bin/envoy /usr/local/bin/envoy
 COPY --from=builder --chmod=755 /authbridge /usr/local/bin/authbridge

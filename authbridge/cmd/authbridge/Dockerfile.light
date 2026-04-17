@@ -20,13 +20,12 @@ COPY authlib/ authlib/
 COPY cmd/authbridge/ cmd/authbridge/
 
 ENV GOWORK=off
-RUN cd cmd/authbridge && CGO_ENABLED=0 GOOS=linux go build -o /authbridge . \
-    && chmod 755 /authbridge
+RUN cd cmd/authbridge && CGO_ENABLED=0 GOOS=linux go build -o /authbridge .
 
 # Stage 2: Runtime — distroless static (~2 MB, includes CA certs)
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:a9329520abc449e3b14d5bc3a6ffae065bdde0f02667fa10880c49b35c109fd1
 
-COPY --from=builder /authbridge /usr/local/bin/authbridge
+COPY --from=builder --chmod=755 /authbridge /usr/local/bin/authbridge
 
 # ext_authz/ext_proc (9090), forward proxy (8080), reverse proxy (8081)
 EXPOSE 9090 8080 8081
