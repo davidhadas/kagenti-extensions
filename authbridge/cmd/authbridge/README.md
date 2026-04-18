@@ -1,26 +1,49 @@
-# AuthBridge Unified Binary
+# AuthBridge Binary
 
 A single binary that replaces three separate codebases (go-processor, waypoint, klaviger) with a unified auth proxy supporting three deployment modes.
 
+## Images
+
+| Image | Dockerfile | Size | Contents |
+|-------|-----------|------|----------|
+| `authbridge-envoy` | `Dockerfile` | 140 MB | Envoy + authbridge (UBI9-micro) |
+| `authbridge-light` | `Dockerfile.light` | 29 MB | authbridge only (distroless) |
+| `authbridge-unified` | `Dockerfile` | 140 MB | Deprecated alias for `authbridge-envoy` |
+
 ## Modes
 
-| Mode | Interception | Listeners | Deployment |
-|------|-------------|-----------|------------|
-| `envoy-sidecar` | Envoy iptables + ext_proc | gRPC ext_proc on :9090 | Sidecar per agent pod |
-| `waypoint` | Istio ambient + ext_authz | gRPC ext_authz + HTTP forward proxy | Shared service in kagenti-system |
-| `proxy-sidecar` | Reverse proxy + forward proxy | HTTP reverse proxy + forward proxy | Sidecar without Envoy |
+| Mode | Image | Interception | Listeners |
+|------|-------|-------------|-----------|
+| `envoy-sidecar` | `authbridge-envoy` | Envoy iptables + ext_proc | gRPC ext_proc on :9090 |
+| `proxy-sidecar` | `authbridge-light` | HTTP_PROXY env + port-stealing | HTTP reverse proxy + forward proxy |
+| `waypoint` | `authbridge-light` | Istio ambient + ext_authz | gRPC ext_authz + HTTP forward proxy |
+
+### proxy-sidecar port-stealing
+
+In proxy-sidecar mode, the kagenti-operator webhook transparently intercepts the agent's port:
+
+1. The reverse proxy takes over the agent's original port (e.g., `:8000`)
+2. The agent is moved to a free port (e.g., `:8001`) via `PORT` env var
+3. `HTTP_PROXY`/`HTTPS_PROXY` env vars are injected into the agent container
+4. The Service targetPort remains unchanged — traffic flows through the reverse proxy
+
+The operator passes the dynamically assigned ports via env vars (`REVERSE_PROXY_ADDR`, `REVERSE_PROXY_BACKEND`, `FORWARD_PROXY_ADDR`) which are expanded via `${...}` in the config YAML.
 
 ## Building
 
 ```bash
-# From authbridge/ directory (build context)
-podman build -f cmd/authbridge/Dockerfile -t authbridge-unified:local .
+# Envoy variant (envoy-sidecar mode)
+podman build -f cmd/authbridge/Dockerfile -t authbridge-envoy:local authbridge/
+
+# Lightweight variant (proxy-sidecar / waypoint modes)
+podman build -f cmd/authbridge/Dockerfile.light -t authbridge-light:local authbridge/
 
 # Load into Kind
-kind load docker-image authbridge-unified:local --name kagenti
+kind load docker-image authbridge-envoy:local --name kagenti
+kind load docker-image authbridge-light:local --name kagenti
 ```
 
-The image contains both Envoy and the authbridge binary. The entrypoint starts both processes with `wait -n` supervision (if either dies, the container restarts).
+The Envoy image contains both Envoy and the authbridge binary. The entrypoint starts both processes with `wait -n` supervision (if either dies, the container restarts). The light image runs the authbridge binary directly as the entrypoint.
 
 ## Running
 
