@@ -13,11 +13,12 @@ import (
 
 // yamlRoute is the configuration file format for route entries.
 type yamlRoute struct {
-	Host           string `yaml:"host"`
-	TargetAudience string `yaml:"target_audience,omitempty"`
-	TokenScopes    string `yaml:"token_scopes,omitempty"`
-	TokenURL       string `yaml:"token_url,omitempty"`
-	Passthrough    bool   `yaml:"passthrough,omitempty"`
+	Host           string   `yaml:"host"`
+	AuthMode       AuthMode `yaml:"auth_mode,omitempty"`
+	TargetAudience string   `yaml:"target_audience,omitempty"`
+	TokenScopes    string   `yaml:"token_scopes,omitempty"`
+	TokenURL       string   `yaml:"token_url,omitempty"`
+	Passthrough    bool     `yaml:"passthrough,omitempty"`
 }
 
 type routeEntry struct {
@@ -61,14 +62,23 @@ func NewStaticResolver(configPath string) (*StaticResolver, error) {
 			continue
 		}
 
+		authMode := yr.AuthMode
+		if authMode == "" {
+			if yr.Passthrough {
+				authMode = AuthModePassthrough
+			} else {
+				authMode = AuthModeService
+			}
+		}
+
 		r.routes = append(r.routes, routeEntry{
 			pattern: yr.Host,
 			glob:    g,
 			config: TargetConfig{
+				AuthMode:      authMode,
 				Audience:      yr.TargetAudience,
 				Scopes:        yr.TokenScopes,
 				TokenEndpoint: yr.TokenURL,
-				Passthrough:   yr.Passthrough,
 			},
 		})
 	}

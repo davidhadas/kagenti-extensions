@@ -610,14 +610,26 @@ func (p *processor) handleOutbound(ctx context.Context, headers *core.HeaderMap)
 		log.Printf("[Resolver] Error resolving host %q: %v", requestHost, err)
 	}
 
+	// Determine authentication mode for this target
+	authMode := resolver.AuthModeService // default
+	if targetConfig != nil && targetConfig.AuthMode != "" {
+		authMode = targetConfig.AuthMode
+	}
+
 	// Handle passthrough routes - skip token exchange
-	if targetConfig != nil && targetConfig.Passthrough {
-		log.Printf("[Resolver] Passthrough enabled for host %q, skipping token exchange", requestHost)
+	if authMode == resolver.AuthModePassthrough {
+		log.Printf("[Resolver] Passthrough auth mode enabled for host %q, skipping token exchange", requestHost)
 		return &v3.ProcessingResponse{
 			Response: &v3.ProcessingResponse_RequestHeaders{
 				RequestHeaders: &v3.HeadersResponse{},
 			},
 		}
+	}
+
+	// Handle user_oauth mode - not yet implemented
+	if authMode == resolver.AuthModeUserOAuth {
+		log.Printf("[Resolver] UserOAuth auth mode requested for host %q, but not yet implemented - falling back to service mode", requestHost)
+		// Fall through to service mode
 	}
 
 	// Handle default outbound policy when no route matches

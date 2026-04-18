@@ -238,14 +238,15 @@ func TestStaticResolver_Passthrough(t *testing.T) {
 	if config == nil {
 		t.Fatal("expected config, got nil")
 	}
-	if !config.Passthrough {
-		t.Error("expected Passthrough to be true")
+	if config.AuthMode != AuthModePassthrough {
+		t.Errorf("expected AuthModePassthrough, got %q", config.AuthMode)
 	}
 }
 
 func TestStaticResolver_AllFields(t *testing.T) {
 	yaml := `
 - host: "full.example.com"
+  auth_mode: "user_oauth"
   target_audience: "aud"
   token_scopes: "openid profile"
   token_url: "https://custom.idp/token"
@@ -260,6 +261,9 @@ func TestStaticResolver_AllFields(t *testing.T) {
 	if config == nil {
 		t.Fatal("expected config, got nil")
 	}
+	if config.AuthMode != AuthModeUserOAuth {
+		t.Errorf("AuthMode: expected %q, got %q", AuthModeUserOAuth, config.AuthMode)
+	}
 	if config.Audience != "aud" {
 		t.Errorf("Audience: expected 'aud', got %q", config.Audience)
 	}
@@ -268,9 +272,6 @@ func TestStaticResolver_AllFields(t *testing.T) {
 	}
 	if config.TokenEndpoint != "https://custom.idp/token" {
 		t.Errorf("TokenEndpoint: expected 'https://custom.idp/token', got %q", config.TokenEndpoint)
-	}
-	if config.Passthrough != false {
-		t.Errorf("Passthrough: expected false, got true")
 	}
 }
 
