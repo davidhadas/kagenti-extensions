@@ -19,7 +19,7 @@ The [`cmd/authbridge/`](./cmd/authbridge/) directory contains a unified binary t
 | `proxy-sidecar` | `authbridge-light` | Lightweight proxy via HTTP_PROXY env | Agent routes outbound traffic through forward proxy; reverse proxy validates inbound JWTs |
 | `waypoint` | `authbridge-light` | Shared proxy in Istio ambient mesh | Standalone deployment (not injected as sidecar) |
 
-The operator selects the mode via the `kagenti.io/authbridge-mode` annotation on the workload. Default is `envoy-sidecar`.
+The operator selects the mode via the `kagenti.io/authbridge-mode` annotation on the workload. Default is `envoy-sidecar`. See [kagenti-operator PR #295](https://github.com/kagenti/kagenti-operator/pull/295) for the implementation.
 
 ### Image naming
 

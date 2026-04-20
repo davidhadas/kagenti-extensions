@@ -8,7 +8,7 @@ A single binary that replaces three separate codebases (go-processor, waypoint, 
 |-------|-----------|------|----------|
 | `authbridge-envoy` | `Dockerfile` | 140 MB | Envoy + authbridge (UBI9-micro) |
 | `authbridge-light` | `Dockerfile.light` | 29 MB | authbridge only (distroless) |
-| `authbridge-unified` | `Dockerfile` | 140 MB | Deprecated alias for `authbridge-envoy` |
+| `authbridge-unified` | `Dockerfile` | 140 MB | Deprecated alias (same image as `authbridge-envoy`) |
 
 ## Modes
 
@@ -18,9 +18,9 @@ A single binary that replaces three separate codebases (go-processor, waypoint, 
 | `proxy-sidecar` | `authbridge-light` | HTTP_PROXY env + port-stealing | HTTP reverse proxy + forward proxy |
 | `waypoint` | `authbridge-light` | Istio ambient + ext_authz | gRPC ext_authz + HTTP forward proxy |
 
-### proxy-sidecar port-stealing
+### proxy-sidecar port reassignment
 
-In proxy-sidecar mode, the kagenti-operator webhook transparently intercepts the agent's port:
+In proxy-sidecar mode, the kagenti-operator webhook transparently reassigns the agent's port to interpose the reverse proxy:
 
 1. The reverse proxy takes over the agent's original port (e.g., `:8000`)
 2. The agent is moved to a free port (e.g., `:8001`) via `PORT` env var
