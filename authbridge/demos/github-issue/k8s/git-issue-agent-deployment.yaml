@@ -88,7 +88,10 @@ spec:
             #       key: apikey
 
             # Agent service settings
-            - name: SERVICE_PORT
+            # PORT tells the agent where to listen for A2A traffic.
+            # The kagenti operator may override this via proxy-sidecar
+            # port-stealing to relocate the agent to a free port.
+            - name: PORT
               value: "8000"
             - name: LOG_LEVEL
               value: "DEBUG"
