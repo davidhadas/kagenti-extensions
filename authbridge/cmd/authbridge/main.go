@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -29,10 +31,56 @@ import (
 	"github.com/kagenti/kagenti-extensions/authbridge/cmd/authbridge/listener/reverseproxy"
 )
 
+// logLevel is the dynamic log level, togglable at runtime via SIGUSR1.
+var logLevel = new(slog.LevelVar)
+
+func initLogging() {
+	// LOG_LEVEL env var sets the initial level: debug, info, warn, error.
+	// Default: info. Override at runtime with SIGUSR1 (toggles debug/info).
+	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
+	case "debug":
+		logLevel.Set(slog.LevelDebug)
+	case "warn":
+		logLevel.Set(slog.LevelWarn)
+	case "error":
+		logLevel.Set(slog.LevelError)
+	default:
+		logLevel.Set(slog.LevelInfo)
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
+}
+
+func startSignalToggle() {
+	// SIGUSR1 toggles between info and debug at runtime.
+	// Usage: kubectl exec <pod> -c authbridge-proxy -- kill -USR1 1
+	var debugOn atomic.Bool
+	if logLevel.Level() == slog.LevelDebug {
+		debugOn.Store(true)
+	}
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGUSR1)
+	go func() {
+		for range sigCh {
+			if debugOn.Load() {
+				logLevel.Set(slog.LevelInfo)
+				debugOn.Store(false)
+				slog.Info("log level toggled to INFO (send SIGUSR1 to switch back to DEBUG)")
+			} else {
+				logLevel.Set(slog.LevelDebug)
+				debugOn.Store(true)
+				slog.Info("log level toggled to DEBUG (send SIGUSR1 to switch back to INFO)")
+			}
+		}
+	}()
+}
+
 func main() {
 	mode := flag.String("mode", "", "deployment mode: envoy-sidecar, waypoint, proxy-sidecar")
 	configPath := flag.String("config", "", "path to config YAML file")
 	flag.Parse()
+
+	initLogging()
+	startSignalToggle()
 
 	if *configPath == "" {
 		log.Fatal("--config is required")
@@ -84,7 +132,7 @@ func main() {
 		log.Fatalf("unhandled mode %q", cfg.Mode)
 	}
 
-	slog.Info("authbridge starting", "mode", cfg.Mode)
+	slog.Info("authbridge starting", "mode", cfg.Mode, "logLevel", logLevel.Level().String())
 
 	// Resolve credentials in background — doesn't block the listener.
 	// Once credential files are available, update the handler's identity
