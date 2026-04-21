@@ -14,6 +14,7 @@ import (
 	"github.com/kagenti/kagenti-extensions/authbridge/authlib/exchange"
 	"github.com/kagenti/kagenti-extensions/authbridge/authlib/routing"
 	"github.com/kagenti/kagenti-extensions/authbridge/authlib/spiffe"
+	"github.com/kagenti/kagenti-extensions/authbridge/authlib/tokenbroker"
 	"github.com/kagenti/kagenti-extensions/authbridge/authlib/validation"
 )
 
@@ -64,16 +65,17 @@ func Resolve(_ context.Context, cfg *Config) (*auth.Config, error) {
 	}
 
 	result := &auth.Config{
-		Verifier:      verifier,
-		Exchanger:     exchanger,
-		Cache:         cache.New(),
-		Bypass:        matcher,
-		Router:        router,
+		Verifier:  verifier,
+		Exchanger: exchanger,
+		Cache:     cache.New(),
+		Bypass:    matcher,
+		Router:    router,
 		Identity: auth.IdentityConfig{
 			ClientID: cfg.Identity.ClientID,
 			Audience: cfg.Identity.ClientID, // inbound audience defaults to client ID
 		},
-		NoTokenPolicy: NoTokenPolicyForMode(cfg.Mode),
+		NoTokenPolicy:     NoTokenPolicyForMode(cfg.Mode),
+		TokenBrokerClient: tokenbroker.NewClient(),
 	}
 
 	// Waypoint mode: derive audience from destination hostname when no route matches
@@ -211,11 +213,12 @@ func resolveRouter(cfg *Config) (*routing.Router, error) {
 			action = "passthrough" // backwards compatibility
 		}
 		rules = append(rules, routing.Route{
-			Host:          rc.Host,
-			Audience:      rc.TargetAudience,
-			Scopes:        rc.TokenScopes,
-			TokenEndpoint: rc.TokenURL,
-			Action:        action,
+			Host:           rc.Host,
+			Audience:       rc.TargetAudience,
+			Scopes:         rc.TokenScopes,
+			TokenEndpoint:  rc.TokenURL,
+			Action:         action,
+			TokenBrokerURL: rc.TokenBrokerURL,
 		})
 	}
 

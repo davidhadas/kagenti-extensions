@@ -12,6 +12,7 @@ import (
 	"github.com/kagenti/kagenti-extensions/authbridge/authlib/cache"
 	"github.com/kagenti/kagenti-extensions/authbridge/authlib/exchange"
 	"github.com/kagenti/kagenti-extensions/authbridge/authlib/routing"
+	"github.com/kagenti/kagenti-extensions/authbridge/authlib/tokenbroker"
 	"github.com/kagenti/kagenti-extensions/authbridge/authlib/validation"
 )
 
@@ -32,30 +33,32 @@ type AudienceDeriver func(host string) string
 
 // Config holds the resolved dependencies for the auth layer.
 type Config struct {
-	Verifier         validation.Verifier
-	Exchanger        *exchange.Client
-	Cache            *cache.Cache
-	Bypass           *bypass.Matcher
-	Router           *routing.Router
-	Identity         IdentityConfig
-	NoTokenPolicy    string           // NoTokenClientCredentials, NoTokenAllow, or NoTokenDeny
-	ActorTokenSource ActorTokenSource // optional, for act claim chaining
-	AudienceDeriver  AudienceDeriver  // optional, derives audience from host (waypoint mode)
-	Logger           *slog.Logger
+	Verifier          validation.Verifier
+	Exchanger         *exchange.Client
+	Cache             *cache.Cache
+	Bypass            *bypass.Matcher
+	Router            *routing.Router
+	Identity          IdentityConfig
+	NoTokenPolicy     string              // NoTokenClientCredentials, NoTokenAllow, or NoTokenDeny
+	ActorTokenSource  ActorTokenSource    // optional, for act claim chaining
+	AudienceDeriver   AudienceDeriver     // optional, derives audience from host (waypoint mode)
+	TokenBrokerClient *tokenbroker.Client // optional, for broker routes
+	Logger            *slog.Logger
 }
 
 // Auth composes authlib building blocks into inbound validation and outbound exchange.
 type Auth struct {
-	verifier         validation.Verifier
-	exchanger        *exchange.Client
-	cache            *cache.Cache
-	bypass           *bypass.Matcher
-	router           *routing.Router
-	identity         atomic.Pointer[IdentityConfig]
-	noTokenPolicy    string
-	actorTokenSource ActorTokenSource
-	audienceDeriver  AudienceDeriver
-	log              *slog.Logger
+	verifier          validation.Verifier
+	exchanger         *exchange.Client
+	cache             *cache.Cache
+	bypass            *bypass.Matcher
+	router            *routing.Router
+	identity          atomic.Pointer[IdentityConfig]
+	noTokenPolicy     string
+	actorTokenSource  ActorTokenSource
+	audienceDeriver   AudienceDeriver
+	tokenBrokerClient *tokenbroker.Client
+	log               *slog.Logger
 }
 
 // New creates an Auth instance from resolved configuration.
@@ -65,15 +68,16 @@ func New(cfg Config) *Auth {
 		logger = slog.Default()
 	}
 	a := &Auth{
-		verifier:         cfg.Verifier,
-		exchanger:        cfg.Exchanger,
-		cache:            cfg.Cache,
-		bypass:           cfg.Bypass,
-		router:           cfg.Router,
-		noTokenPolicy:    cfg.NoTokenPolicy,
-		actorTokenSource: cfg.ActorTokenSource,
-		audienceDeriver:  cfg.AudienceDeriver,
-		log:              logger,
+		verifier:          cfg.Verifier,
+		exchanger:         cfg.Exchanger,
+		cache:             cfg.Cache,
+		bypass:            cfg.Bypass,
+		router:            cfg.Router,
+		noTokenPolicy:     cfg.NoTokenPolicy,
+		actorTokenSource:  cfg.ActorTokenSource,
+		audienceDeriver:   cfg.AudienceDeriver,
+		tokenBrokerClient: cfg.TokenBrokerClient,
+		log:               logger,
 	}
 	id := cfg.Identity
 	a.identity.Store(&id)
@@ -178,7 +182,20 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 		return &OutboundResult{Action: ActionAllow}
 	}
 
-	// 3. Determine audience/scopes
+	// 3. Broker route
+	if resolved.Broker {
+		if a.tokenBrokerClient == nil {
+			a.log.Error("broker route but no Token Broker client configured", "host", host)
+			return &OutboundResult{
+				Action:     ActionDeny,
+				DenyStatus: http.StatusServiceUnavailable,
+				DenyReason: "Token Broker not configured",
+			}
+		}
+		return a.handleBroker(ctx, resolved, host)
+	}
+
+	// 4. Determine audience/scopes
 	audience := resolved.Audience
 	scopes := resolved.Scopes
 
@@ -260,6 +277,61 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 	a.log.Debug("outbound token exchanged",
 		"host", host, "audience", audience, "expiresIn", resp.ExpiresIn)
 	return &OutboundResult{Action: ActionReplaceToken, Token: resp.AccessToken}
+}
+
+func (a *Auth) handleBroker(ctx context.Context, resolved *routing.ResolvedRoute, host string) *OutboundResult {
+	// Extract headers from context
+	headers := HeadersFromContext(ctx)
+	if headers == nil {
+		headers = make(map[string]string)
+	}
+
+	sessionKey := headers["x-oauth-session-key"]
+	userID := headers["x-user-id"]
+
+	if sessionKey == "" || userID == "" {
+		a.log.Warn("missing oauth session headers for broker route",
+			"has_session_key", sessionKey != "",
+			"has_user_id", userID != "")
+		return &OutboundResult{
+			Action:     ActionDeny,
+			DenyStatus: http.StatusForbidden,
+			DenyReason: "Failed to obtain user authorization for this MCP server.",
+			Broker:     true,
+		}
+	}
+
+	// Derive MCP server URL from host if not in headers
+	mcpServerURL := headers["x-mcp-server-url"]
+	if mcpServerURL == "" {
+		mcpServerURL = "http://" + host
+	}
+
+	a.log.Info("acquiring token from Token Broker",
+		"session_key", sessionKey,
+		"user_id", userID,
+		"mcp_server", mcpServerURL)
+
+	// Call Token Broker (blocks until token available)
+	token, err := a.tokenBrokerClient.AcquireToken(ctx, resolved.TokenBrokerURL, sessionKey, userID, mcpServerURL)
+	if err != nil {
+		a.log.Error("token broker acquisition failed",
+			"session_key", sessionKey,
+			"mcp_server", mcpServerURL,
+			"error", err)
+		return &OutboundResult{
+			Action:     ActionDeny,
+			DenyStatus: http.StatusForbidden,
+			DenyReason: "Failed to obtain user authorization for this MCP server.",
+			Broker:     true,
+		}
+	}
+
+	a.log.Info("token acquired from Token Broker",
+		"session_key", sessionKey,
+		"mcp_server", mcpServerURL)
+
+	return &OutboundResult{Action: ActionReplaceToken, Token: token}
 }
 
 func (a *Auth) handleNoToken(ctx context.Context, audience, scopes string) *OutboundResult {

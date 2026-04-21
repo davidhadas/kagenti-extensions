@@ -89,16 +89,39 @@ func (s *Server) handleOutbound(ctx context.Context, headers *corev3.HeaderMap) 
 		host = getHeader(headers, "host")
 	}
 
+	// Extract broker route headers and inject into context
+	extraHeaders := make(map[string]string)
+	if sessionKey := getHeader(headers, "x-oauth-session-key"); sessionKey != "" {
+		extraHeaders["x-oauth-session-key"] = sessionKey
+	}
+	if userID := getHeader(headers, "x-user-id"); userID != "" {
+		extraHeaders["x-user-id"] = userID
+	}
+	if mcpServerURL := getHeader(headers, "x-mcp-server-url"); mcpServerURL != "" {
+		extraHeaders["x-mcp-server-url"] = mcpServerURL
+	}
+
+	// Inject headers into context
+	if len(extraHeaders) > 0 {
+		ctx = auth.ContextWithHeaders(ctx, extraHeaders)
+	}
+
 	result := s.Auth.HandleOutbound(ctx, authHeader, host)
+
+	// Internal Kagenti headers to strip before forwarding upstream
+	headersToRemove := []string{"x-oauth-session-key", "x-user-id", "x-mcp-server-url"}
 
 	switch result.Action {
 	case auth.ActionReplaceToken:
-		return replaceTokenResponse(result.Token)
+		return replaceTokenAndStripHeadersResponse(result.Token, headersToRemove)
 	case auth.ActionDeny:
+		if result.Broker {
+			return denyResponse(typev3.StatusCode_Forbidden, mcpJSONRPCError(result.DenyReason))
+		}
 		return denyResponse(typev3.StatusCode_ServiceUnavailable,
 			jsonError("token_acquisition_failed", result.DenyReason))
 	default:
-		return passResponse()
+		return passAndStripHeadersResponse(headersToRemove)
 	}
 }
 
@@ -159,6 +182,58 @@ func denyResponse(code typev3.StatusCode, body string) *extprocv3.ProcessingResp
 func jsonError(errorCode, message string) string {
 	b, _ := json.Marshal(map[string]string{"error": errorCode, "message": message})
 	return string(b)
+}
+
+func mcpJSONRPCError(message string) string {
+	response := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      nil,
+		"error": map[string]interface{}{
+			"code":    -32001,
+			"message": message,
+		},
+	}
+	b, _ := json.Marshal(response)
+	return string(b)
+}
+
+func replaceTokenAndStripHeadersResponse(token string, headersToRemove []string) *extprocv3.ProcessingResponse {
+	headerMutation := &extprocv3.HeaderMutation{
+		SetHeaders: []*corev3.HeaderValueOption{
+			{Header: &corev3.HeaderValue{Key: "authorization", RawValue: []byte("Bearer " + token)}},
+		},
+	}
+	for _, h := range headersToRemove {
+		headerMutation.RemoveHeaders = append(headerMutation.RemoveHeaders, h)
+	}
+	return &extprocv3.ProcessingResponse{
+		Response: &extprocv3.ProcessingResponse_RequestHeaders{
+			RequestHeaders: &extprocv3.HeadersResponse{
+				Response: &extprocv3.CommonResponse{
+					HeaderMutation: headerMutation,
+				},
+			},
+		},
+	}
+}
+
+func passAndStripHeadersResponse(headersToRemove []string) *extprocv3.ProcessingResponse {
+	if len(headersToRemove) == 0 {
+		return passResponse()
+	}
+	headerMutation := &extprocv3.HeaderMutation{}
+	for _, h := range headersToRemove {
+		headerMutation.RemoveHeaders = append(headerMutation.RemoveHeaders, h)
+	}
+	return &extprocv3.ProcessingResponse{
+		Response: &extprocv3.ProcessingResponse_RequestHeaders{
+			RequestHeaders: &extprocv3.HeadersResponse{
+				Response: &extprocv3.CommonResponse{
+					HeaderMutation: headerMutation,
+				},
+			},
+		},
+	}
 }
 
 func getHeader(headers *corev3.HeaderMap, key string) string {
