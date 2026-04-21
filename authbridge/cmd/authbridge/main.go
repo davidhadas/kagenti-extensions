@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -51,23 +50,18 @@ func initLogging() {
 }
 
 func startSignalToggle() {
-	// SIGUSR1 toggles between info and debug at runtime.
+	// SIGUSR1 toggles between info and debug at runtime, regardless of
+	// the initial LOG_LEVEL (warn/error are treated as "not debug").
 	// Usage: kubectl exec <pod> -c authbridge-proxy -- kill -USR1 1
-	var debugOn atomic.Bool
-	if logLevel.Level() == slog.LevelDebug {
-		debugOn.Store(true)
-	}
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGUSR1)
 	go func() {
 		for range sigCh {
-			if debugOn.Load() {
+			if logLevel.Level() == slog.LevelDebug {
 				logLevel.Set(slog.LevelInfo)
-				debugOn.Store(false)
 				slog.Info("log level toggled to INFO (send SIGUSR1 to switch back to DEBUG)")
 			} else {
 				logLevel.Set(slog.LevelDebug)
-				debugOn.Store(true)
 				slog.Info("log level toggled to DEBUG (send SIGUSR1 to switch back to INFO)")
 			}
 		}
