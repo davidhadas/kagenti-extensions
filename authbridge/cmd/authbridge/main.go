@@ -195,6 +195,7 @@ func startGRPCExtAuthz(handler *auth.Auth, addr string) *grpc.Server {
 	srv := grpc.NewServer()
 	authv3.RegisterAuthorizationServer(srv, &extauthz.Server{Auth: handler})
 	registerHealth(srv)
+	reflection.Register(srv)
 
 	go func() {
 		lis, err := net.Listen("tcp", addr)
