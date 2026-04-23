@@ -1,0 +1,45 @@
+# AuthBridge overrides for the Weather advanced demo (token exchange to tool).
+#
+# Apply after the Kagenti platform has created the namespace and baseline
+# authbridge-config / envoy-config / spiffe-helper-config ConfigMaps.
+#
+# The authbridge-config patch below mirrors authbridge/demos/github-issue/k8s/configmaps.yaml
+# and adds explicit TOKEN_URL / JWKS_URL. Without TOKEN_URL, the ext_proc build used with
+# envoy-with-processor can log "inbound JWT validation disabled" and allow unauthenticated
+# requests to /mcp (HTTP 200). After applying, restart the weather deployment so pods pick
+# up the new environment variables.
+#
+# The host value must match the HTTP Host header the agent uses when calling
+# the MCP service — use the short Kubernetes Service name from MCP_URL.
+#
+# target_audience is the weather tool Keycloak client ID, which equals its
+# SPIFFE ID once client-registration has run (ServiceAccount: weather-tool-advanced).
+#
+# Usage:
+#   kubectl apply -f configmaps-advanced.yaml
+#   kubectl rollout restart deploy/weather-tool-advanced -n team1
+#
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authbridge-config
+  namespace: team1
+data:
+  KEYCLOAK_URL: "http://keycloak-service.keycloak.svc:8080"
+  KEYCLOAK_REALM: "kagenti"
+  ISSUER: "http://keycloak.localtest.me:8080/realms/kagenti"
+  SPIRE_ENABLED: "true"
+  TOKEN_URL: "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/token"
+  JWKS_URL: "http://keycloak-service.keycloak.svc:8080/realms/kagenti/protocol/openid-connect/certs"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authproxy-routes
+  namespace: team1
+data:
+  routes.yaml: |
+    - host: "weather-tool-advanced-mcp"
+      target_audience: "spiffe://localtest.me/ns/team1/sa/weather-tool-advanced"
+      token_scopes: "openid weather-tool-exchange-aud"
