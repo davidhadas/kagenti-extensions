@@ -225,7 +225,7 @@ VERIFYEOS
 
 VERIFY_B64=$(printf '%s' "$VERIFY_SCRIPT" | base64 | tr -d '\n')
 kubectl run "adv-verify-$$" --rm -i --restart=Never -n "$NAMESPACE" \
-  --image=nicolaka/netshoot:latest \
+  --image=nicolaka/netshoot:v0.15 \
   --command -- bash -lc "echo '${VERIFY_B64}' | base64 -d | bash" | tee /tmp/adv-verify.out
 
 grep -q 'MCP_HTTP_CODE=' /tmp/adv-verify.out || die "verify pod produced no MCP_HTTP_CODE line"
