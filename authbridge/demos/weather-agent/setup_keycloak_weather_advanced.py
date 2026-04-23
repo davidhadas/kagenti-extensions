@@ -32,9 +32,9 @@ KEYCLOAK_ADMIN_PASSWORD = os.environ.get("KEYCLOAK_ADMIN_PASSWORD", "admin")
 SPIFFE_TRUST_DOMAIN = "localtest.me"
 UI_CLIENT_ID = os.environ.get("UI_CLIENT_ID", "kagenti")
 
-# Public client for automated tests (password grant) — the UI client often has
-# direct access grants disabled.
-E2E_PASSWORD_CLIENT_ID = "weather-advanced-e2e"
+# Public client for automated tests (ROPC / direct access) — the UI client often
+# has direct access grants disabled.
+E2E_ROPC_CLIENT_ID = "weather-advanced-e2e"
 
 DEMO_USER = {
     "username": "alice",
@@ -279,12 +279,12 @@ def main() -> None:
     except Exception as e:
         print(f"Note: could not add optional scope '{exchange_scope_name}': {e}")
 
-    # --- E2E public client (password grant for deploy_and_verify_advanced.sh) ---
-    print(f"\n--- E2E client '{E2E_PASSWORD_CLIENT_ID}' (password grant) ---")
+    # --- E2E public client (ROPC for deploy_and_verify_advanced.sh) ---
+    print(f"\n--- E2E client '{E2E_ROPC_CLIENT_ID}' (ROPC / direct access) ---")
     get_or_create_client(
         keycloak_admin,
         {
-            "clientId": E2E_PASSWORD_CLIENT_ID,
+            "clientId": E2E_ROPC_CLIENT_ID,
             "name": "Weather advanced E2E (direct access grants)",
             "enabled": True,
             "publicClient": True,
@@ -292,11 +292,11 @@ def main() -> None:
             "directAccessGrantsEnabled": True,
         },
     )
-    e2e_internal = keycloak_admin.get_client_id(E2E_PASSWORD_CLIENT_ID)
+    e2e_internal = keycloak_admin.get_client_id(E2E_ROPC_CLIENT_ID)
     if e2e_internal:
         try:
             keycloak_admin.add_client_default_client_scope(e2e_internal, agent_aud_scope_id, {})
-            print(f"Added '{agent_aud_scope_name}' as default scope on '{E2E_PASSWORD_CLIENT_ID}'.")
+            print(f"Added '{agent_aud_scope_name}' as default scope on '{E2E_ROPC_CLIENT_ID}'.")
         except Exception as e:
             print(f"Note: could not add default scope to E2E client: {e}")
 
@@ -354,9 +354,9 @@ def main() -> None:
     try:
         uid = keycloak_admin.get_user_id(DEMO_USER["username"])
         keycloak_admin.set_user_password(uid, DEMO_USER["password"], temporary=False)
-        print("Ensured password for 'alice' (for E2E password grant).")
+        print("Ensured demo user 'alice' credential (for E2E ROPC / direct access).")
     except Exception as e:
-        print(f"Note: could not set password for alice: {e}")
+        print(f"Note: could not update user credential for alice: {e}")
     try:
         admin_role = keycloak_admin.get_realm_role("admin")
         uid = keycloak_admin.get_user_id(DEMO_USER["username"])
