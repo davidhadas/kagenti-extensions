@@ -188,15 +188,23 @@ if test -z "\$EXCHANGED" || test "\$EXCHANGED" = "null"; then
   exit 1
 fi
 
-echo "POST /mcp with exchanged token (expect not 401)..."
+echo "POST /mcp with exchanged token (streamable HTTP; expect 2xx)..."
+# FastMCP streamable transport rejects requests unless the client advertises support
+# for both JSON and SSE (HTTP 406 otherwise).
 HTTP_CODE=\$(curl -sS -o /tmp/mcp.body -w '%{http_code}' \\
   -H "Authorization: Bearer \${EXCHANGED}" \\
   -H "Content-Type: application/json" \\
+  -H "Accept: application/json, text/event-stream" \\
   -X POST "http://weather-tool-advanced-mcp:8000/mcp" \\
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"verify","version":"0.1"}}}')
 echo "MCP_HTTP_CODE=\${HTTP_CODE}"
 if test "\$HTTP_CODE" = "401"; then
   echo "MCP returned 401" >&2
+  exit 1
+fi
+if ! [[ \${HTTP_CODE} =~ ^2[0-9][0-9]\$ ]]; then
+  echo "MCP returned HTTP \${HTTP_CODE}" >&2
+  head -c 2000 /tmp/mcp.body >&2 || true
   exit 1
 fi
 VERIFYEOS
@@ -212,7 +220,10 @@ HTTP_CODE=$(grep 'MCP_HTTP_CODE=' /tmp/adv-verify.out | tail -1 | cut -d= -f2)
 if [[ "$HTTP_CODE" == "401" ]]; then
   die "MCP returned 401 — tool AuthBridge rejected the exchanged token"
 fi
-log "MCP HTTP status: ${HTTP_CODE} (non-401 means JWT was accepted at ingress)"
+if ! [[ "$HTTP_CODE" =~ ^2[0-9][0-9]$ ]]; then
+  die "MCP returned HTTP $HTTP_CODE — expected 2xx after initialize (401=auth, 406=missing Accept: application/json, text/event-stream)"
+fi
+log "MCP HTTP status: ${HTTP_CODE} (2xx: JWT accepted at ingress and streamable HTTP handshake OK)"
 
 log "Checking tool AuthBridge logs for successful inbound validation..."
 sleep 3

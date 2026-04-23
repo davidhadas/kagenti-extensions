@@ -249,9 +249,11 @@ verifies **end-to-end** without relying on an LLM:
    the authenticated client and alice’s token as the `subject_token`, with
    `audience` set to the **tool SPIFFE** and scope `openid weather-tool-exchange-aud`.
 3. HTTP `POST` to `http://weather-tool-advanced-mcp:8000/mcp` with a minimal
-   JSON-RPC `initialize` body. **HTTP 401 is a hard failure**; other statuses
-   mean the JWT was accepted at the tool’s AuthBridge ingress (the MCP layer
-   may still return application-level errors).
+   JSON-RPC `initialize` body. The tool uses **streamable HTTP**; send
+   `Accept: application/json, text/event-stream` (otherwise the MCP server
+   often returns **406** even when AuthBridge already accepted the JWT). **HTTP
+   401 is a hard failure**; a **2xx** response means the JWT was accepted and
+   the initialize handshake completed.
 
 Run from anywhere:
 
