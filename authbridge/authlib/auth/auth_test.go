@@ -355,6 +355,9 @@ func TestNewStats(t *testing.T) {
 	if len(s.outboundDenials) != 0 {
 		t.Errorf("outboundDenials = %d entries, want 0", len(s.outboundDenials))
 	}
+	if len(s.outboundReplaceTokens) != 0 {
+		t.Errorf("outboundReplaceTokens = %d entries, want 0", len(s.outboundReplaceTokens))
+	}
 }
 
 func TestIncInboundApprove(t *testing.T) {
@@ -397,27 +400,56 @@ func TestIncInboundDeny(t *testing.T) {
 func TestIncOutboundApprove(t *testing.T) {
 	a := New(Config{})
 
-	a.IncOutboundApprove(APPROVE_REPLACE_TOKEN)
-	a.IncOutboundApprove(OUTBOUND_ACTION_ALLOW)
-	a.IncOutboundApprove(OUTBOUND_ACTION_ALLOW)
+	a.IncOutboundApprove(OUTBOUND_NO_MATCHING_ROUTE)
+	a.IncOutboundApprove(OUTBOUND_PASSTHROUGH)
+	a.IncOutboundApprove(OUTBOUND_PASSTHROUGH)
+	a.IncOutboundApprove(OUTBOUND_NO_TOKEN_POLICY)
 
-	if got := a.Stats.outboundApprovals[APPROVE_REPLACE_TOKEN]; got != 1 {
-		t.Errorf("APPROVE_REPLACE_TOKEN = %d, want 1", got)
+	if got := a.Stats.outboundApprovals[OUTBOUND_NO_MATCHING_ROUTE]; got != 1 {
+		t.Errorf("OUTBOUND_NO_MATCHING_ROUTE = %d, want 1", got)
 	}
-	if got := a.Stats.outboundApprovals[OUTBOUND_ACTION_ALLOW]; got != 2 {
-		t.Errorf("OUTBOUND_ACTION_ALLOW = %d, want 2", got)
+	if got := a.Stats.outboundApprovals[OUTBOUND_PASSTHROUGH]; got != 2 {
+		t.Errorf("OUTBOUND_PASSTHROUGH = %d, want 2", got)
+	}
+	if got := a.Stats.outboundApprovals[OUTBOUND_NO_TOKEN_POLICY]; got != 1 {
+		t.Errorf("OUTBOUND_NO_TOKEN_POLICY = %d, want 1", got)
 	}
 }
 
 func TestIncOutboundDeny(t *testing.T) {
 	a := New(Config{})
 
-	a.IncOutboundDeny(TOKEN_ACQUISITION_FAILED)
-	a.IncOutboundDeny(TOKEN_ACQUISITION_FAILED)
-	a.IncOutboundDeny(TOKEN_ACQUISITION_FAILED)
+	a.IncOutboundDeny(OUTBOUND_NO_EXCHANGER)
+	a.IncOutboundDeny(OUTBOUND_CREDENTIALS_GRANT_FAILURE)
+	a.IncOutboundDeny(OUTBOUND_CREDENTIALS_GRANT_FAILURE)
+	a.IncOutboundDeny(OUTBOUND_NO_TOKEN)
+	a.IncOutboundDeny(OUTBOUND_TOKEN_EXCHANGE_FAILED)
 
-	if got := a.Stats.outboundDenials[TOKEN_ACQUISITION_FAILED]; got != 3 {
-		t.Errorf("TOKEN_ACQUISITION_FAILED = %d, want 3", got)
+	expected := map[OutboundDenialReason]int{
+		OUTBOUND_NO_EXCHANGER:            1,
+		OUTBOUND_CREDENTIALS_GRANT_FAILURE: 2,
+		OUTBOUND_NO_TOKEN:                 1,
+		OUTBOUND_TOKEN_EXCHANGE_FAILED:    1,
+	}
+	for reason, want := range expected {
+		if got := a.Stats.outboundDenials[reason]; got != want {
+			t.Errorf("%s = %d, want %d", reason, got, want)
+		}
+	}
+}
+
+func TestIncOutboundReplaceToken(t *testing.T) {
+	a := New(Config{})
+
+	a.IncOutboundReplaceToken(OUTBOUND_ACTION_REPLACE_TOKEN)
+	a.IncOutboundReplaceToken(OUTBOUND_ACTION_REPLACE_TOKEN)
+	a.IncOutboundReplaceToken(OUTBOUND_ACTION_CACHE_HIT)
+
+	if got := a.Stats.outboundReplaceTokens[OUTBOUND_ACTION_REPLACE_TOKEN]; got != 2 {
+		t.Errorf("OUTBOUND_ACTION_REPLACE_TOKEN = %d, want 2", got)
+	}
+	if got := a.Stats.outboundReplaceTokens[OUTBOUND_ACTION_CACHE_HIT]; got != 1 {
+		t.Errorf("OUTBOUND_ACTION_CACHE_HIT = %d, want 1", got)
 	}
 }
 
@@ -454,8 +486,8 @@ func TestStatsMarshalJSON_WithCounts(t *testing.T) {
 	a.IncInboundDeny(DENY_NO_HEADER)
 	a.IncInboundDeny(DENY_JWT_FAILED)
 	a.IncInboundDeny(DENY_JWT_FAILED)
-	a.IncOutboundApprove(APPROVE_REPLACE_TOKEN)
-	a.IncOutboundDeny(TOKEN_ACQUISITION_FAILED)
+	a.IncOutboundApprove(OUTBOUND_PASSTHROUGH)
+	a.IncOutboundDeny(OUTBOUND_TOKEN_EXCHANGE_FAILED)
 
 	data, err := json.Marshal(a.Stats)
 	if err != nil {
@@ -476,8 +508,8 @@ func TestStatsMarshalJSON_WithCounts(t *testing.T) {
 		{"inbound_approvals", "passthrough", 1},
 		{"inbound_denials", "no_header", 1},
 		{"inbound_denials", "jwt_failed", 2},
-		{"outbound_approvals", "replace_token", 1},
-		{"outbound_denials", "token_acquisition_failed", 1},
+		{"outbound_approvals", "passthrough", 1},
+		{"outbound_denials", "token_exchange_failed", 1},
 	}
 	for _, tc := range checks {
 		if got[tc.section][tc.key] != tc.want {
@@ -490,8 +522,8 @@ func TestStatsMarshalJSON_UsesStringKeys(t *testing.T) {
 	a := New(Config{})
 	a.IncInboundApprove(APPROVE_PASSTHROUGH)
 	a.IncInboundDeny(DENY_MALFORMED_HEADER)
-	a.IncOutboundApprove(OUTBOUND_ACTION_ALLOW)
-	a.IncOutboundDeny(TOKEN_ACQUISITION_FAILED)
+	a.IncOutboundApprove(OUTBOUND_NO_MATCHING_ROUTE)
+	a.IncOutboundDeny(OUTBOUND_NO_EXCHANGER)
 
 	data, err := json.Marshal(a.Stats)
 	if err != nil {
@@ -500,7 +532,7 @@ func TestStatsMarshalJSON_UsesStringKeys(t *testing.T) {
 
 	raw := string(data)
 	expectedKeys := []string{
-		`"passthrough"`, `"malformed_header"`, `"allow"`, `"token_acquisition_failed"`,
+		`"passthrough"`, `"malformed_header"`, `"no_matching_route"`, `"no_exchanger"`,
 	}
 	for _, key := range expectedKeys {
 		if !strings.Contains(raw, key) {
@@ -513,22 +545,24 @@ func TestStatsConcurrentAccess(t *testing.T) {
 	a := New(Config{})
 	done := make(chan struct{})
 
-	for i := range 100 {
+	for i := range 125 {
 		go func(n int) {
 			defer func() { done <- struct{}{} }()
-			switch n % 4 {
+			switch n % 5 {
 			case 0:
 				a.IncInboundApprove(APPROVE_AUTHORIZED)
 			case 1:
 				a.IncInboundDeny(DENY_JWT_FAILED)
 			case 2:
-				a.IncOutboundApprove(APPROVE_REPLACE_TOKEN)
+				a.IncOutboundApprove(OUTBOUND_PASSTHROUGH)
 			case 3:
-				a.IncOutboundDeny(TOKEN_ACQUISITION_FAILED)
+				a.IncOutboundDeny(OUTBOUND_TOKEN_EXCHANGE_FAILED)
+			case 4:
+				a.IncOutboundReplaceToken(OUTBOUND_ACTION_REPLACE_TOKEN)
 			}
 		}(i)
 	}
-	for range 100 {
+	for range 125 {
 		<-done
 	}
 
@@ -538,16 +572,20 @@ func TestStatsConcurrentAccess(t *testing.T) {
 	if got := a.Stats.inboundDenials[DENY_JWT_FAILED]; got != 25 {
 		t.Errorf("concurrent inbound denials = %d, want 25", got)
 	}
-	if got := a.Stats.outboundApprovals[APPROVE_REPLACE_TOKEN]; got != 25 {
+	if got := a.Stats.outboundApprovals[OUTBOUND_PASSTHROUGH]; got != 25 {
 		t.Errorf("concurrent outbound approvals = %d, want 25", got)
 	}
-	if got := a.Stats.outboundDenials[TOKEN_ACQUISITION_FAILED]; got != 25 {
+	if got := a.Stats.outboundDenials[OUTBOUND_TOKEN_EXCHANGE_FAILED]; got != 25 {
 		t.Errorf("concurrent outbound denials = %d, want 25", got)
+	}
+	if got := a.Stats.outboundReplaceTokens[OUTBOUND_ACTION_REPLACE_TOKEN]; got != 25 {
+		t.Errorf("concurrent outbound replace tokens = %d, want 25", got)
 	}
 }
 
 func TestStatsConcurrentMarshal(t *testing.T) {
 	a := New(Config{})
+	errs := make(chan error, 50)
 	done := make(chan struct{})
 
 	for range 50 {
@@ -558,12 +596,16 @@ func TestStatsConcurrentMarshal(t *testing.T) {
 		go func() {
 			defer func() { done <- struct{}{} }()
 			if _, err := json.Marshal(a.Stats); err != nil {
-				t.Errorf("concurrent MarshalJSON: %v", err)
+				errs <- err
 			}
 		}()
 	}
 	for range 100 {
 		<-done
+	}
+	close(errs)
+	for err := range errs {
+		t.Fatal("concurrent MarshalJSON:", err)
 	}
 }
 
@@ -608,8 +650,9 @@ func TestOutboundApprovalReasonString(t *testing.T) {
 		reason OutboundApprovalReason
 		want   string
 	}{
-		{APPROVE_REPLACE_TOKEN, "replace_token"},
-		{OUTBOUND_ACTION_ALLOW, "allow"},
+		{OUTBOUND_NO_MATCHING_ROUTE, "no_matching_route"},
+		{OUTBOUND_PASSTHROUGH, "passthrough"},
+		{OUTBOUND_NO_TOKEN_POLICY, "no_token_policy"},
 		{OutboundApprovalReason(99), "unknown"},
 	}
 	for _, tc := range tests {
@@ -624,12 +667,31 @@ func TestOutboundDenialReasonString(t *testing.T) {
 		reason OutboundDenialReason
 		want   string
 	}{
-		{TOKEN_ACQUISITION_FAILED, "token_acquisition_failed"},
+		{OUTBOUND_NO_EXCHANGER, "no_exchanger"},
+		{OUTBOUND_CREDENTIALS_GRANT_FAILURE, "credentials_grant_failure"},
+		{OUTBOUND_NO_TOKEN, "no_token"},
+		{OUTBOUND_TOKEN_EXCHANGE_FAILED, "token_exchange_failed"},
 		{OutboundDenialReason(99), "unknown"},
 	}
 	for _, tc := range tests {
 		if got := tc.reason.String(); got != tc.want {
 			t.Errorf("OutboundDenialReason(%d).String() = %q, want %q", tc.reason, got, tc.want)
+		}
+	}
+}
+
+func TestOutboundReplaceTokenReasonString(t *testing.T) {
+	tests := []struct {
+		reason OutboundReplaceTokenReason
+		want   string
+	}{
+		{OUTBOUND_ACTION_REPLACE_TOKEN, "replace_token"},
+		{OUTBOUND_ACTION_CACHE_HIT, "cache_hit"},
+		{OutboundReplaceTokenReason(99), "unknown"},
+	}
+	for _, tc := range tests {
+		if got := tc.reason.String(); got != tc.want {
+			t.Errorf("OutboundReplaceTokenReason(%d).String() = %q, want %q", tc.reason, got, tc.want)
 		}
 	}
 }

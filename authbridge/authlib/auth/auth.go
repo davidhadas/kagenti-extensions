@@ -62,12 +62,14 @@ type Auth struct {
 }
 
 // Stats holds statistics for validation and exchange.
+// The current implementation keeps approvals/denials/exchange as counters.
 type Stats struct {
-	mu                sync.Mutex // protects the following fields
-	inboundApprovals  map[InboundApprovalReason]int
-	inboundDenials    map[InboundDenialReason]int
-	outboundApprovals map[OutboundApprovalReason]int
-	outboundDenials   map[OutboundDenialReason]int
+	mu                    sync.Mutex // protects the following fields
+	inboundApprovals      map[InboundApprovalReason]int
+	inboundDenials        map[InboundDenialReason]int
+	outboundApprovals     map[OutboundApprovalReason]int
+	outboundDenials       map[OutboundDenialReason]int
+	outboundReplaceTokens map[OutboundReplaceTokenReason]int
 }
 
 // InboundFailureReason enumerates the reasons for inbound validation failure.
@@ -92,15 +94,27 @@ const (
 type OutboundApprovalReason int
 
 const (
-	APPROVE_REPLACE_TOKEN OutboundApprovalReason = iota
-	OUTBOUND_ACTION_ALLOW
+	OUTBOUND_NO_MATCHING_ROUTE OutboundApprovalReason = iota
+	OUTBOUND_PASSTHROUGH
+	OUTBOUND_NO_TOKEN_POLICY
 )
 
 // OutboundDenialReason enumerates the reasons for outbound denial.
 type OutboundDenialReason int
 
 const (
-	TOKEN_ACQUISITION_FAILED OutboundDenialReason = iota
+	OUTBOUND_NO_EXCHANGER OutboundDenialReason = iota
+	OUTBOUND_CREDENTIALS_GRANT_FAILURE
+	OUTBOUND_NO_TOKEN
+	OUTBOUND_TOKEN_EXCHANGE_FAILED
+)
+
+// OutboundDenialReason enumerates the reasons for outbound token exchange.
+type OutboundReplaceTokenReason int
+
+const (
+	OUTBOUND_ACTION_REPLACE_TOKEN OutboundReplaceTokenReason = iota
+	OUTBOUND_ACTION_CACHE_HIT
 )
 
 func (r InboundDenialReason) String() string {
@@ -131,10 +145,12 @@ func (r InboundApprovalReason) String() string {
 
 func (r OutboundApprovalReason) String() string {
 	switch r {
-	case APPROVE_REPLACE_TOKEN:
-		return "replace_token"
-	case OUTBOUND_ACTION_ALLOW:
-		return "allow"
+	case OUTBOUND_NO_MATCHING_ROUTE:
+		return "no_matching_route"
+	case OUTBOUND_PASSTHROUGH:
+		return "passthrough"
+	case OUTBOUND_NO_TOKEN_POLICY:
+		return "no_token_policy"
 	default:
 		return "unknown"
 	}
@@ -142,8 +158,25 @@ func (r OutboundApprovalReason) String() string {
 
 func (r OutboundDenialReason) String() string {
 	switch r {
-	case TOKEN_ACQUISITION_FAILED:
-		return "token_acquisition_failed"
+	case OUTBOUND_NO_EXCHANGER:
+		return "no_exchanger"
+	case OUTBOUND_CREDENTIALS_GRANT_FAILURE:
+		return "credentials_grant_failure"
+	case OUTBOUND_NO_TOKEN:
+		return "no_token"
+	case OUTBOUND_TOKEN_EXCHANGE_FAILED:
+		return "token_exchange_failed"
+	default:
+		return "unknown"
+	}
+}
+
+func (r OutboundReplaceTokenReason) String() string {
+	switch r {
+	case OUTBOUND_ACTION_REPLACE_TOKEN:
+		return "replace_token"
+	case OUTBOUND_ACTION_CACHE_HIT:
+		return "cache_hit"
 	default:
 		return "unknown"
 	}
@@ -168,6 +201,10 @@ func (s *Stats) MarshalJSON() ([]byte, error) {
 	outDenials := make(map[string]int, len(s.outboundDenials))
 	for k, v := range s.outboundDenials {
 		outDenials[k.String()] = v
+	}
+	outReplaceTokens := make(map[string]int, len(s.outboundReplaceTokens))
+	for k, v := range s.outboundReplaceTokens {
+		outReplaceTokens[k.String()] = v
 	}
 
 	return json.Marshal(struct {
@@ -302,10 +339,12 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 
 	// 2. Passthrough
 	if resolved == nil {
+		a.IncOutboundApprove(OUTBOUND_NO_MATCHING_ROUTE)
 		a.log.Info("outbound passthrough", "host", host, "reason", "no matching route")
 		return &OutboundResult{Action: ActionAllow}
 	}
 	if resolved.Passthrough {
+		a.IncOutboundApprove(OUTBOUND_PASSTHROUGH)
 		a.log.Info("outbound passthrough", "host", host, "reason", "route action")
 		return &OutboundResult{Action: ActionAllow}
 	}
@@ -337,6 +376,7 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 	// 5. Cache check
 	if a.cache != nil {
 		if cached, ok := a.cache.Get(subjectToken, audience); ok {
+			a.IncOutboundReplaceToken(OUTBOUND_ACTION_CACHE_HIT)
 			a.log.Debug("outbound cache hit", "host", host, "audience", audience)
 			return &OutboundResult{Action: ActionReplaceToken, Token: cached}
 		}
@@ -344,6 +384,7 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 
 	// 6. Token exchange
 	if a.exchanger == nil {
+		a.IncOutboundApprove(OutboundApprovalReason(OUTBOUND_NO_EXCHANGER))
 		a.log.Warn("exchanger not configured, passing through",
 			"host", host, "audience", audience)
 		return &OutboundResult{Action: ActionAllow}
@@ -368,6 +409,7 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 		TokenEndpoint: resolved.TokenEndpoint, // per-route override
 	})
 	if err != nil {
+		a.IncOutboundDeny(OUTBOUND_TOKEN_EXCHANGE_FAILED)
 		a.log.Info("token exchange failed", "host", host, "error", err)
 		a.log.Debug("token exchange failure details",
 			"host", host,
@@ -389,6 +431,7 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 			time.Duration(resp.ExpiresIn)*time.Second)
 	}
 
+	a.IncOutboundReplaceToken(OUTBOUND_ACTION_REPLACE_TOKEN)
 	a.log.Info("outbound token exchanged", "host", host, "audience", audience)
 	a.log.Debug("outbound exchange details",
 		"host", host, "audience", audience, "expiresIn", resp.ExpiresIn)
@@ -398,11 +441,13 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 func (a *Auth) handleNoToken(ctx context.Context, audience, scopes string) *OutboundResult {
 	switch a.noTokenPolicy {
 	case NoTokenPolicyAllow:
+		a.IncOutboundApprove(OUTBOUND_NO_TOKEN_POLICY)
 		a.log.Debug("no token, policy=allow")
 		return &OutboundResult{Action: ActionAllow}
 
 	case NoTokenPolicyClientCredentials:
 		if a.exchanger == nil {
+			a.IncOutboundDeny(OUTBOUND_NO_EXCHANGER)
 			a.log.Debug("no token, client_credentials requested but exchanger not configured",
 				"audience", audience)
 			return &OutboundResult{
@@ -415,6 +460,7 @@ func (a *Auth) handleNoToken(ctx context.Context, audience, scopes string) *Outb
 			"audience", audience, "scopes", scopes)
 		resp, err := a.exchanger.ClientCredentials(ctx, audience, scopes)
 		if err != nil {
+			a.IncOutboundDeny(OUTBOUND_CREDENTIALS_GRANT_FAILURE)
 			a.log.Info("client credentials grant failed", "error", err)
 			a.log.Debug("client credentials failure details",
 				"audience", audience, "scopes", scopes, "error", err)
@@ -424,9 +470,11 @@ func (a *Auth) handleNoToken(ctx context.Context, audience, scopes string) *Outb
 				DenyReason: "client credentials token acquisition failed",
 			}
 		}
+		a.IncOutboundReplaceToken(OUTBOUND_ACTION_REPLACE_TOKEN)
 		return &OutboundResult{Action: ActionReplaceToken, Token: resp.AccessToken}
 
 	default: // NoTokenDeny or unknown
+		a.IncOutboundDeny(OUTBOUND_NO_TOKEN)
 		a.log.Debug("no token, policy denies request",
 			"policy", a.noTokenPolicy, "audience", audience)
 		return &OutboundResult{
@@ -447,10 +495,11 @@ func extractBearer(authHeader string) string {
 
 func NewStats() *Stats {
 	return &Stats{
-		inboundApprovals:  make(map[InboundApprovalReason]int),
-		inboundDenials:    make(map[InboundDenialReason]int),
-		outboundApprovals: make(map[OutboundApprovalReason]int),
-		outboundDenials:   make(map[OutboundDenialReason]int),
+		inboundApprovals:      make(map[InboundApprovalReason]int),
+		inboundDenials:        make(map[InboundDenialReason]int),
+		outboundApprovals:     make(map[OutboundApprovalReason]int),
+		outboundDenials:       make(map[OutboundDenialReason]int),
+		outboundReplaceTokens: make(map[OutboundReplaceTokenReason]int),
 	}
 }
 
@@ -479,5 +528,11 @@ func (a *Auth) IncOutboundApprove(reason OutboundApprovalReason) {
 func (a *Auth) IncOutboundDeny(reason OutboundDenialReason) {
 	a.Stats.mu.Lock()
 	a.Stats.outboundDenials[reason]++
+	a.Stats.mu.Unlock()
+}
+
+func (a *Auth) IncOutboundReplaceToken(reason OutboundReplaceTokenReason) {
+	a.Stats.mu.Lock()
+	a.Stats.outboundReplaceTokens[reason]++
 	a.Stats.mu.Unlock()
 }
