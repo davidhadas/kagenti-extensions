@@ -19,8 +19,8 @@ import (
 
 // mockVerifier captures the audience arg and returns configured claims/error.
 type mockVerifier struct {
-	claims      *validation.Claims
-	err         error
+	claims       *validation.Claims
+	err          error
 	lastAudience string
 }
 
@@ -385,10 +385,10 @@ func TestIncInboundDeny(t *testing.T) {
 	a.IncInboundDeny(DENY_JWT_FAILED)
 
 	expected := map[InboundDenialReason]int{
-		DENY_NO_HEADER:       1,
-		DENY_MALFORMED_HEADER: 1,
+		DENY_NO_HEADER:         1,
+		DENY_MALFORMED_HEADER:  1,
 		DENY_VALIDATOR_MISSING: 1,
-		DENY_JWT_FAILED:       2,
+		DENY_JWT_FAILED:        2,
 	}
 	for reason, want := range expected {
 		if got := a.Stats.inboundDenials[reason]; got != want {
@@ -419,17 +419,17 @@ func TestIncOutboundApprove(t *testing.T) {
 func TestIncOutboundDeny(t *testing.T) {
 	a := New(Config{})
 
-	a.IncOutboundDeny(OUTBOUND_NO_EXCHANGER)
+	a.IncOutboundDeny(OUTBOUND_CREDS_REQUESTED_NO_EXCHANGER)
 	a.IncOutboundDeny(OUTBOUND_CREDENTIALS_GRANT_FAILURE)
 	a.IncOutboundDeny(OUTBOUND_CREDENTIALS_GRANT_FAILURE)
 	a.IncOutboundDeny(OUTBOUND_NO_TOKEN)
 	a.IncOutboundDeny(OUTBOUND_TOKEN_EXCHANGE_FAILED)
 
 	expected := map[OutboundDenialReason]int{
-		OUTBOUND_NO_EXCHANGER:            1,
-		OUTBOUND_CREDENTIALS_GRANT_FAILURE: 2,
-		OUTBOUND_NO_TOKEN:                 1,
-		OUTBOUND_TOKEN_EXCHANGE_FAILED:    1,
+		OUTBOUND_CREDS_REQUESTED_NO_EXCHANGER: 1,
+		OUTBOUND_CREDENTIALS_GRANT_FAILURE:    2,
+		OUTBOUND_NO_TOKEN:                     1,
+		OUTBOUND_TOKEN_EXCHANGE_FAILED:        1,
 	}
 	for reason, want := range expected {
 		if got := a.Stats.outboundDenials[reason]; got != want {
@@ -523,7 +523,7 @@ func TestStatsMarshalJSON_UsesStringKeys(t *testing.T) {
 	a.IncInboundApprove(APPROVE_PASSTHROUGH)
 	a.IncInboundDeny(DENY_MALFORMED_HEADER)
 	a.IncOutboundApprove(OUTBOUND_NO_MATCHING_ROUTE)
-	a.IncOutboundDeny(OUTBOUND_NO_EXCHANGER)
+	a.IncOutboundDeny(OUTBOUND_CREDS_REQUESTED_NO_EXCHANGER)
 
 	data, err := json.Marshal(a.Stats)
 	if err != nil {
@@ -532,7 +532,7 @@ func TestStatsMarshalJSON_UsesStringKeys(t *testing.T) {
 
 	raw := string(data)
 	expectedKeys := []string{
-		`"passthrough"`, `"malformed_header"`, `"no_matching_route"`, `"no_exchanger"`,
+		`"passthrough"`, `"malformed_header"`, `"no_matching_route"`, `"creds_requested_no_exchanger"`,
 	}
 	for _, key := range expectedKeys {
 		if !strings.Contains(raw, key) {
@@ -667,7 +667,7 @@ func TestOutboundDenialReasonString(t *testing.T) {
 		reason OutboundDenialReason
 		want   string
 	}{
-		{OUTBOUND_NO_EXCHANGER, "no_exchanger"},
+		{OUTBOUND_CREDS_REQUESTED_NO_EXCHANGER, "creds_requested_no_exchanger"},
 		{OUTBOUND_CREDENTIALS_GRANT_FAILURE, "credentials_grant_failure"},
 		{OUTBOUND_NO_TOKEN, "no_token"},
 		{OUTBOUND_TOKEN_EXCHANGE_FAILED, "token_exchange_failed"},
@@ -745,4 +745,3 @@ func TestHandleInbound_JWTFailed_IncrementsStats(t *testing.T) {
 		t.Errorf("jwt_failed denial = %d, want 1", got)
 	}
 }
-
