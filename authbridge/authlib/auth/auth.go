@@ -151,6 +151,8 @@ func (r OutboundDenialReason) String() string {
 
 func (s *Stats) MarshalJSON() ([]byte, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	inApprovals := make(map[string]int, len(s.inboundApprovals))
 	for k, v := range s.inboundApprovals {
 		inApprovals[k.String()] = v
@@ -167,7 +169,6 @@ func (s *Stats) MarshalJSON() ([]byte, error) {
 	for k, v := range s.outboundDenials {
 		outDenials[k.String()] = v
 	}
-	s.mu.Unlock()
 
 	return json.Marshal(struct {
 		InboundApprovals  map[string]int `json:"inbound_approvals"`

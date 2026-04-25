@@ -11,14 +11,14 @@ import (
 
 // Config is the top-level AuthBridge configuration.
 type Config struct {
-	Mode     string         `yaml:"mode"` // "envoy-sidecar", "waypoint", "proxy-sidecar"
-	Inbound  InboundConfig  `yaml:"inbound"`
-	Outbound OutboundConfig `yaml:"outbound"`
-	Identity IdentityConfig `yaml:"identity"`
-	Listener ListenerConfig `yaml:"listener"`
-	Bypass   BypassConfig   `yaml:"bypass"`
-	Routes   RoutesConfig   `yaml:"routes"`
-	Stats    StatsConfig    `yaml:"stats"`
+	Mode     string         `yaml:"mode" json:"mode"` // "envoy-sidecar", "waypoint", "proxy-sidecar"
+	Inbound  InboundConfig  `yaml:"inbound" json:"inbound"`
+	Outbound OutboundConfig `yaml:"outbound" json:"outbound"`
+	Identity IdentityConfig `yaml:"identity" json:"identity"`
+	Listener ListenerConfig `yaml:"listener" json:"listener"`
+	Bypass   BypassConfig   `yaml:"bypass" json:"bypass"`
+	Routes   RoutesConfig   `yaml:"routes" json:"routes"`
+	Stats    StatsConfig    `yaml:"stats" json:"stats"`
 }
 
 // InboundConfig holds JWT validation settings.
@@ -108,5 +108,11 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
+
+	// Default stats server address
+	if cfg.Stats.StatsAddress == "" {
+		cfg.Stats.StatsAddress = ":9093"
+	}
+
 	return &cfg, nil
 }

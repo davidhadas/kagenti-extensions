@@ -230,10 +230,6 @@ func startHTTPServer(name string, handler http.Handler, addr string) *http.Serve
 }
 
 func startStatServer(config *config.Config, handler *auth.Auth) *observe.StatServer {
-	if config.Stats.StatsAddress == "" {
-		config.Stats.StatsAddress = ":9093"
-	}
-
 	srv := observe.NewStatServer(config.Stats.StatsAddress, config, handler.Stats)
 	go func() {
 		slog.Info("stat server listening", "addr", config.Stats.StatsAddress)
