@@ -73,7 +73,7 @@ type RouteConfig struct {
 	Host           string `yaml:"host" json:"host"`
 	TargetAudience string `yaml:"target_audience,omitempty" json:"target_audience"`
 	TokenScopes    string `yaml:"token_scopes,omitempty" json:"token_scopes"`
-	TokenURL       string `yaml:"token_url,omitempty" json:"address"`
+	TokenURL       string `yaml:"token_url,omitempty" json:"token_url"`
 	Passthrough    bool   `yaml:"passthrough,omitempty" json:"passthrough"` // legacy format
 	Action         string `yaml:"action,omitempty" json:"action"`           // "exchange" or "passthrough"
 }
