@@ -62,7 +62,7 @@ func handleConfigFactory(cfg *config.Config) func(http.ResponseWriter, *http.Req
 			Identity: config.IdentityConfig{
 				Type:             cfg.Identity.Type,
 				ClientID:         cfg.Identity.ClientID,
-				ClientSecret:     "<redacted>",
+				ClientSecret:     "*redacted*",
 				ClientIDFile:     cfg.Identity.ClientIDFile,
 				ClientSecretFile: cfg.Identity.ClientSecretFile,
 				SocketPath:       cfg.Identity.SocketPath,

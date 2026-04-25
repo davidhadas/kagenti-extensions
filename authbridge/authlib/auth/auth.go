@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -62,6 +63,7 @@ type Auth struct {
 
 // Stats holds statistics for validation and exchange.
 type Stats struct {
+	mu                sync.Mutex // protects the following fields
 	inboundApprovals  map[InboundApprovalReason]int
 	inboundDenials    map[InboundDenialReason]int
 	outboundApprovals map[OutboundApprovalReason]int
@@ -148,6 +150,7 @@ func (r OutboundDenialReason) String() string {
 }
 
 func (s *Stats) MarshalJSON() ([]byte, error) {
+	s.mu.Lock()
 	inApprovals := make(map[string]int, len(s.inboundApprovals))
 	for k, v := range s.inboundApprovals {
 		inApprovals[k.String()] = v
@@ -164,6 +167,8 @@ func (s *Stats) MarshalJSON() ([]byte, error) {
 	for k, v := range s.outboundDenials {
 		outDenials[k.String()] = v
 	}
+	s.mu.Unlock()
+
 	return json.Marshal(struct {
 		InboundApprovals  map[string]int `json:"inbound_approvals"`
 		InboundDenials    map[string]int `json:"inbound_denials"`
@@ -450,20 +455,28 @@ func NewStats() *Stats {
 
 // IncInboundApprove records a new approval (for statistics)
 func (a *Auth) IncInboundApprove(reason InboundApprovalReason) {
+	a.Stats.mu.Lock()
 	a.Stats.inboundApprovals[reason]++
+	a.Stats.mu.Unlock()
 }
 
 // IncInboundDeny records a new denial (for statistics)
 func (a *Auth) IncInboundDeny(reason InboundDenialReason) {
+	a.Stats.mu.Lock()
 	a.Stats.inboundDenials[reason]++
+	a.Stats.mu.Unlock()
 }
 
 // IncOutboundApprove records a new approval (for statistics)
 func (a *Auth) IncOutboundApprove(reason OutboundApprovalReason) {
+	a.Stats.mu.Lock()
 	a.Stats.outboundApprovals[reason]++
+	a.Stats.mu.Unlock()
 }
 
 // IncOutboundDeny records a new denial (for statistics)
 func (a *Auth) IncOutboundDeny(reason OutboundDenialReason) {
+	a.Stats.mu.Lock()
 	a.Stats.outboundDenials[reason]++
+	a.Stats.mu.Unlock()
 }
