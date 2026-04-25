@@ -78,7 +78,7 @@ const (
 	DENY_JWT_FAILED
 )
 
-// InboundApprovalReason enumerates the rational for inbound validation success.
+// InboundApprovalReason enumerates the rationale for inbound validation success.
 type InboundApprovalReason int
 
 const (
@@ -86,7 +86,7 @@ const (
 	APPROVE_AUTHORIZED
 )
 
-// OutboundSuccessReason enumerates the rational for outbound validation success.
+// OutboundSuccessReason enumerates the rationale for outbound validation success.
 type OutboundApprovalReason int
 
 const (
@@ -94,7 +94,7 @@ const (
 	OUTBOUND_ACTION_ALLOW
 )
 
-// OutboundDenialReason enumerates the rational for outbound denial.
+// OutboundDenialReason enumerates the reasons for outbound denial.
 type OutboundDenialReason int
 
 const (

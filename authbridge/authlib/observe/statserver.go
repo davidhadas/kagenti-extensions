@@ -42,10 +42,37 @@ func NewStatServer(addr string, config *config.Config, stats *auth.Stats) *StatS
 	}
 }
 
-func handleConfigFactory(config *config.Config) func(http.ResponseWriter, *http.Request) {
+func handleConfigFactory(cfg *config.Config) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(config)
+		// Rather than outputting the entire config,
+		// customize the output to redact the client secret.
+		json.NewEncoder(w).Encode(struct {
+			Mode     string                `json:"host"`
+			Inbound  config.InboundConfig  `yaml:"inbound"`
+			Outbound config.OutboundConfig `yaml:"outbound"`
+			Identity config.IdentityConfig `yaml:"identity"`
+			Listener config.ListenerConfig `yaml:"listener"`
+			Bypass   config.BypassConfig   `yaml:"bypass"`
+			Routes   config.RoutesConfig   `yaml:"routes"`
+		}{
+			Mode:     cfg.Mode,
+			Inbound:  cfg.Inbound,
+			Outbound: cfg.Outbound,
+			Identity: config.IdentityConfig{
+				Type:             cfg.Identity.Type,
+				ClientID:         cfg.Identity.ClientID,
+				ClientSecret:     "<redacted>",
+				ClientIDFile:     cfg.Identity.ClientIDFile,
+				ClientSecretFile: cfg.Identity.ClientSecretFile,
+				SocketPath:       cfg.Identity.SocketPath,
+				JWTSVIDPath:      cfg.Identity.JWTSVIDPath,
+				JWTAudience:      cfg.Identity.JWTAudience,
+			},
+			Listener: cfg.Listener,
+			Bypass:   cfg.Bypass,
+			Routes:   cfg.Routes,
+		})
 	}
 }
 
