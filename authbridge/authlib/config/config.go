@@ -23,64 +23,64 @@ type Config struct {
 
 // InboundConfig holds JWT validation settings.
 type InboundConfig struct {
-	JWKSURL string `yaml:"jwks_url"`
-	Issuer  string `yaml:"issuer"`
+	JWKSURL string `yaml:"jwks_url" json:"jwks_url"`
+	Issuer  string `yaml:"issuer" json:"issuer"`
 }
 
 // OutboundConfig holds token exchange settings.
 type OutboundConfig struct {
-	TokenURL      string `yaml:"token_url"`
-	KeycloakURL   string `yaml:"keycloak_url"`   // alternative: derives token_url and issuer
-	KeycloakRealm string `yaml:"keycloak_realm"` // used with keycloak_url
-	DefaultPolicy string `yaml:"default_policy"` // "exchange" or "passthrough"
+	TokenURL      string `yaml:"token_url" json:"token_url"`
+	KeycloakURL   string `yaml:"keycloak_url" json:"keycloak_url"`     // alternative: derives token_url and issuer
+	KeycloakRealm string `yaml:"keycloak_realm" json:"keycloak_realm"` // used with keycloak_url
+	DefaultPolicy string `yaml:"default_policy" json:"default_policy"` // "exchange" or "passthrough"
 }
 
 // IdentityConfig holds agent identity and credentials.
 type IdentityConfig struct {
-	Type             string   `yaml:"type"` // "spiffe", "client-secret", "k8s-sa"
-	ClientID         string   `yaml:"client_id"`
-	ClientSecret     string   `yaml:"client_secret"`
-	ClientIDFile     string   `yaml:"client_id_file"`     // alternative: read client_id from file
-	ClientSecretFile string   `yaml:"client_secret_file"` // alternative: read client_secret from file
-	SocketPath       string   `yaml:"socket_path"`        // SPIFFE Workload API
-	JWTSVIDPath      string   `yaml:"jwt_svid_path"`      // file-based SPIFFE
-	JWTAudience      []string `yaml:"jwt_audience"`       // SPIFFE JWT audience
+	Type             string   `yaml:"type" json:"type"` // "spiffe", "client-secret", "k8s-sa"
+	ClientID         string   `yaml:"client_id" json:"client_id"`
+	ClientSecret     string   `yaml:"client_secret" json:"client_secret"`
+	ClientIDFile     string   `yaml:"client_id_file" json:"client_id_file"`         // alternative: read client_id from file
+	ClientSecretFile string   `yaml:"client_secret_file" json:"client_secret_file"` // alternative: read client_secret from file
+	SocketPath       string   `yaml:"socket_path" json:"socket_path"`               // SPIFFE Workload API
+	JWTSVIDPath      string   `yaml:"jwt_svid_path" json:"jwt_svid_path"`           // file-based SPIFFE
+	JWTAudience      []string `yaml:"jwt_audience" json:"jwt_audience"`             // SPIFFE JWT audience
 }
 
 // ListenerConfig holds per-mode listener addresses.
 type ListenerConfig struct {
-	ExtProcAddr         string `yaml:"ext_proc_addr"`
-	ExtAuthzAddr        string `yaml:"ext_authz_addr"`
-	ForwardProxyAddr    string `yaml:"forward_proxy_addr"`
-	ReverseProxyAddr    string `yaml:"reverse_proxy_addr"`
-	ReverseProxyBackend string `yaml:"reverse_proxy_backend"`
+	ExtProcAddr         string `yaml:"ext_proc_addr" json:"ext_proc_addr"`
+	ExtAuthzAddr        string `yaml:"ext_authz_addr" json:"ext_authz_addr"`
+	ForwardProxyAddr    string `yaml:"forward_proxy_addr" json:"forward_proxy_addr"`
+	ReverseProxyAddr    string `yaml:"reverse_proxy_addr" json:"reverse_proxy_addr"`
+	ReverseProxyBackend string `yaml:"reverse_proxy_backend" json:"reverse_proxy_backend"`
 }
 
 // BypassConfig holds path patterns that skip inbound JWT validation.
 type BypassConfig struct {
-	InboundPaths []string `yaml:"inbound_paths"`
+	InboundPaths []string `yaml:"inbound_paths" json:"inbound_paths"`
 }
 
 // RoutesConfig holds outbound routing rules.
 type RoutesConfig struct {
-	File  string        `yaml:"file"`  // path to routes YAML file
-	Rules []RouteConfig `yaml:"rules"` // inline rules (alternative to file)
+	File  string        `yaml:"file" json:"file"`   // path to routes YAML file
+	Rules []RouteConfig `yaml:"rules" json:"rules"` // inline rules (alternative to file)
 }
 
 // RouteConfig is the YAML representation of an outbound route.
 // Supports both legacy `passthrough: true` and new `action: passthrough` formats.
 type RouteConfig struct {
-	Host           string `yaml:"host"`
-	TargetAudience string `yaml:"target_audience,omitempty"`
-	TokenScopes    string `yaml:"token_scopes,omitempty"`
-	TokenURL       string `yaml:"token_url,omitempty"`
-	Passthrough    bool   `yaml:"passthrough,omitempty"` // legacy format
-	Action         string `yaml:"action,omitempty"`      // "exchange" or "passthrough"
+	Host           string `yaml:"host" json:"host"`
+	TargetAudience string `yaml:"target_audience,omitempty" json:"target_audience"`
+	TokenScopes    string `yaml:"token_scopes,omitempty" json:"token_scopes"`
+	TokenURL       string `yaml:"token_url,omitempty" json:"address"`
+	Passthrough    bool   `yaml:"passthrough,omitempty" json:"passthrough"` // legacy format
+	Action         string `yaml:"action,omitempty" json:"action"`           // "exchange" or "passthrough"
 }
 
 // StatsConfig represents the configuration for reporting config and statistics
 type StatsConfig struct {
-	StatsAddress string `yaml:"address"` // for example, ":9093"
+	StatsAddress string `yaml:"address" json:"address"` // for example, ":9093"
 }
 
 // Valid mode strings.

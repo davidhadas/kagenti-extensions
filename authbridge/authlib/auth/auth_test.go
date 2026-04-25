@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -502,7 +503,7 @@ func TestStatsMarshalJSON_UsesStringKeys(t *testing.T) {
 		`"passthrough"`, `"malformed_header"`, `"allow"`, `"token_acquisition_failed"`,
 	}
 	for _, key := range expectedKeys {
-		if !containsSubstring(raw, key) {
+		if !strings.Contains(raw, key) {
 			t.Errorf("JSON missing key %s: %s", key, raw)
 		}
 	}
@@ -683,15 +684,3 @@ func TestHandleInbound_JWTFailed_IncrementsStats(t *testing.T) {
 	}
 }
 
-func containsSubstring(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && findSubstring(s, substr))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
