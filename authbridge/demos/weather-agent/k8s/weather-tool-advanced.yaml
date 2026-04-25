@@ -31,7 +31,14 @@ metadata:
     protocol.kagenti.io/mcp: ""
     kagenti.io/transport: streamable_http
 spec:
+  # Default Deployment progress deadline is 600s; cold ghcr + webhook restart + many
+  # sidecars in Kind can exceed that before the old ReplicaSet pod drains.
+  progressDeadlineSeconds: 1800
   replicas: 1
+  # Default RollingUpdate can leave the new pod Pending (Insufficient cpu) on a
+  # single Kind node while the old multi-sidecar pod still runs. Recreate serializes.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: weather-tool-advanced
