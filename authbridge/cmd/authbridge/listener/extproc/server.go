@@ -93,11 +93,14 @@ func (s *Server) handleOutbound(ctx context.Context, headers *corev3.HeaderMap) 
 
 	switch result.Action {
 	case auth.ActionReplaceToken:
+		s.Auth.IncOutboundApprove(auth.APPROVE_REPLACE_TOKEN)
 		return replaceTokenResponse(result.Token)
 	case auth.ActionDeny:
+		s.Auth.IncOutboundDeny(auth.TOKEN_ACQUISITION_FAILED)
 		return denyResponse(typev3.StatusCode_ServiceUnavailable,
 			jsonError("token_acquisition_failed", result.DenyReason))
 	default:
+		s.Auth.IncOutboundApprove(auth.OUTBOUND_ACTION_ALLOW)
 		return passResponse()
 	}
 }

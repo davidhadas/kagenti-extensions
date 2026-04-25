@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -56,6 +57,124 @@ type Auth struct {
 	actorTokenSource ActorTokenSource
 	audienceDeriver  AudienceDeriver
 	log              *slog.Logger
+	Stats            *Stats
+}
+
+// Stats holds statistics for validation and exchange.
+type Stats struct {
+	inboundApprovals  map[InboundApprovalReason]int
+	inboundDenials    map[InboundDenialReason]int
+	outboundApprovals map[OutboundApprovalReason]int
+	outboundDenials   map[OutboundDenialReason]int
+}
+
+// InboundFailureReason enumerates the reasons for inbound validation failure.
+type InboundDenialReason int
+
+const (
+	DENY_NO_HEADER InboundDenialReason = iota
+	DENY_MALFORMED_HEADER
+	DENY_VALIDATOR_MISSING
+	DENY_JWT_FAILED
+)
+
+// InboundApprovalReason enumerates the rational for inbound validation success.
+type InboundApprovalReason int
+
+const (
+	APPROVE_PASSTHROUGH InboundApprovalReason = iota
+	APPROVE_AUTHORIZED
+)
+
+// OutboundSuccessReason enumerates the rational for outbound validation success.
+type OutboundApprovalReason int
+
+const (
+	APPROVE_REPLACE_TOKEN OutboundApprovalReason = iota
+	OUTBOUND_ACTION_ALLOW
+)
+
+// OutboundDenialReason enumerates the rational for outbound denial.
+type OutboundDenialReason int
+
+const (
+	TOKEN_ACQUISITION_FAILED OutboundDenialReason = iota
+)
+
+func (r InboundDenialReason) String() string {
+	switch r {
+	case DENY_NO_HEADER:
+		return "no_header"
+	case DENY_MALFORMED_HEADER:
+		return "malformed_header"
+	case DENY_VALIDATOR_MISSING:
+		return "validator_missing"
+	case DENY_JWT_FAILED:
+		return "jwt_failed"
+	default:
+		return "unknown"
+	}
+}
+
+func (r InboundApprovalReason) String() string {
+	switch r {
+	case APPROVE_PASSTHROUGH:
+		return "passthrough"
+	case APPROVE_AUTHORIZED:
+		return "authorized"
+	default:
+		return "unknown"
+	}
+}
+
+func (r OutboundApprovalReason) String() string {
+	switch r {
+	case APPROVE_REPLACE_TOKEN:
+		return "replace_token"
+	case OUTBOUND_ACTION_ALLOW:
+		return "allow"
+	default:
+		return "unknown"
+	}
+}
+
+func (r OutboundDenialReason) String() string {
+	switch r {
+	case TOKEN_ACQUISITION_FAILED:
+		return "token_acquisition_failed"
+	default:
+		return "unknown"
+	}
+}
+
+func (s *Stats) MarshalJSON() ([]byte, error) {
+	inApprovals := make(map[string]int, len(s.inboundApprovals))
+	for k, v := range s.inboundApprovals {
+		inApprovals[k.String()] = v
+	}
+	inDenials := make(map[string]int, len(s.inboundDenials))
+	for k, v := range s.inboundDenials {
+		inDenials[k.String()] = v
+	}
+	outApprovals := make(map[string]int, len(s.outboundApprovals))
+	for k, v := range s.outboundApprovals {
+		outApprovals[k.String()] = v
+	}
+	outDenials := make(map[string]int, len(s.outboundDenials))
+	for k, v := range s.outboundDenials {
+		outDenials[k.String()] = v
+	}
+	return json.Marshal(struct {
+		InboundApprovals  map[string]int `json:"inbound_approvals"`
+		InboundDenials    map[string]int `json:"inbound_denials"`
+		OutboundApprovals map[string]int `json:"outbound_approvals"`
+		OutboundDenials   map[string]int `json:"outbound_denials"`
+	}{
+		InboundApprovals:  inApprovals,
+		InboundDenials:    inDenials,
+		OutboundApprovals: outApprovals,
+		OutboundDenials:   outDenials,
+	})
 }
 
 // New creates an Auth instance from resolved configuration.
@@ -74,6 +193,7 @@ func New(cfg Config) *Auth {
 		actorTokenSource: cfg.ActorTokenSource,
 		audienceDeriver:  cfg.AudienceDeriver,
 		log:              logger,
+		Stats:            NewStats(),
 	}
 	id := cfg.Identity
 	a.identity.Store(&id)
@@ -98,12 +218,14 @@ func (a *Auth) UpdateIdentity(id IdentityConfig, clientAuth exchange.ClientAuth)
 func (a *Auth) HandleInbound(ctx context.Context, authHeader, path, audience string) *InboundResult {
 	// 1. Bypass check
 	if a.bypass != nil && a.bypass.Match(path) {
+		a.IncInboundApprove(APPROVE_PASSTHROUGH)
 		a.log.Debug("bypass path matched", "path", path)
 		return &InboundResult{Action: ActionAllow}
 	}
 
 	// 2. Extract bearer token
 	if authHeader == "" {
+		a.IncInboundDeny(DENY_NO_HEADER)
 		a.log.Debug("inbound denied: no Authorization header", "path", path)
 		return &InboundResult{
 			Action:     ActionDeny,
@@ -113,6 +235,7 @@ func (a *Auth) HandleInbound(ctx context.Context, authHeader, path, audience str
 	}
 	token := extractBearer(authHeader)
 	if token == "" {
+		a.IncInboundDeny(DENY_MALFORMED_HEADER)
 		a.log.Debug("inbound denied: malformed Authorization header", "path", path)
 		return &InboundResult{
 			Action:     ActionDeny,
@@ -123,6 +246,7 @@ func (a *Auth) HandleInbound(ctx context.Context, authHeader, path, audience str
 
 	// 3. Validate JWT
 	if a.verifier == nil {
+		a.IncInboundDeny(DENY_VALIDATOR_MISSING)
 		return &InboundResult{
 			Action:     ActionDeny,
 			DenyStatus: http.StatusUnauthorized,
@@ -137,6 +261,7 @@ func (a *Auth) HandleInbound(ctx context.Context, authHeader, path, audience str
 	if err != nil {
 		// Log full error at Info; log detailed context at Debug.
 		// Generic message returned to client to avoid leaking details.
+		a.IncInboundDeny(DENY_JWT_FAILED)
 		a.log.Info("JWT validation failed", "error", err)
 		a.log.Debug("JWT validation details",
 			"path", path,
@@ -151,6 +276,7 @@ func (a *Auth) HandleInbound(ctx context.Context, authHeader, path, audience str
 	}
 
 	// 4. Allow with claims
+	a.IncInboundApprove(APPROVE_AUTHORIZED)
 	a.log.Info("inbound authorized",
 		"subject", claims.Subject, "clientID", claims.ClientID)
 	a.log.Debug("inbound authorized details",
@@ -311,4 +437,33 @@ func extractBearer(authHeader string) string {
 		return authHeader[7:]
 	}
 	return ""
+}
+
+func NewStats() *Stats {
+	return &Stats{
+		inboundApprovals:  make(map[InboundApprovalReason]int),
+		inboundDenials:    make(map[InboundDenialReason]int),
+		outboundApprovals: make(map[OutboundApprovalReason]int),
+		outboundDenials:   make(map[OutboundDenialReason]int),
+	}
+}
+
+// IncInboundApprove records a new approval (for statistics)
+func (a *Auth) IncInboundApprove(reason InboundApprovalReason) {
+	a.Stats.inboundApprovals[reason]++
+}
+
+// IncInboundDeny records a new denial (for statistics)
+func (a *Auth) IncInboundDeny(reason InboundDenialReason) {
+	a.Stats.inboundDenials[reason]++
+}
+
+// IncOutboundApprove records a new approval (for statistics)
+func (a *Auth) IncOutboundApprove(reason OutboundApprovalReason) {
+	a.Stats.outboundApprovals[reason]++
+}
+
+// IncOutboundDeny records a new denial (for statistics)
+func (a *Auth) IncOutboundDeny(reason OutboundDenialReason) {
+	a.Stats.outboundDenials[reason]++
 }
