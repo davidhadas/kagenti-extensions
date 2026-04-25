@@ -2,6 +2,9 @@ package auth
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -172,30 +175,32 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 		resolved = a.router.Resolve(host)
 	}
 
-	// 2. Passthrough
+	// 2. Explicit action handling
 	if resolved == nil {
 		a.log.Info("outbound passthrough", "host", host, "reason", "no matching route")
 		return &OutboundResult{Action: ActionAllow}
 	}
-	if resolved.Passthrough {
+	if resolved.Action == routing.ActionPassthrough {
 		a.log.Info("outbound passthrough", "host", host, "reason", "route action")
 		return &OutboundResult{Action: ActionAllow}
 	}
-
-	// 3. Broker route
-	if resolved.Broker {
-		if a.tokenBrokerClient == nil {
-			a.log.Error("broker route but no Token Broker client configured", "host", host)
-			return &OutboundResult{
-				Action:     ActionDeny,
-				DenyStatus: http.StatusServiceUnavailable,
-				DenyReason: "Token Broker not configured",
-			}
-		}
-		return a.handleBroker(ctx, resolved, host)
+	if resolved.Action == routing.ActionBroker {
+		return a.handleBrokerRoute(ctx, resolved, host)
+	}
+	if resolved.Action == routing.ActionExchange {
+		return a.handleExchangeRoute(ctx, resolved, authHeader, host)
 	}
 
-	// 4. Determine audience/scopes
+	a.log.Error("unknown route action", "host", host, "action", resolved.Action)
+	return &OutboundResult{
+		Action:     ActionDeny,
+		DenyStatus: http.StatusInternalServerError,
+		DenyReason: "invalid route action",
+	}
+}
+
+func (a *Auth) handleExchangeRoute(ctx context.Context, resolved *routing.ResolvedRoute, authHeader, host string) *OutboundResult {
+	// Determine audience/scopes
 	audience := resolved.Audience
 	scopes := resolved.Scopes
 
@@ -209,7 +214,7 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 		"host", host, "audience", audience, "scopes", scopes,
 		"hasSubjectToken", authHeader != "")
 
-	// 4. Extract bearer token
+	// Extract bearer token
 	subjectToken := extractBearer(authHeader)
 
 	if subjectToken == "" {
@@ -219,7 +224,7 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 		return a.handleNoToken(ctx, audience, scopes)
 	}
 
-	// 5. Cache check
+	// Cache check
 	if a.cache != nil {
 		if cached, ok := a.cache.Get(subjectToken, audience); ok {
 			a.log.Debug("outbound cache hit", "host", host, "audience", audience)
@@ -227,7 +232,7 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 		}
 	}
 
-	// 6. Token exchange
+	// Token exchange
 	if a.exchanger == nil {
 		a.log.Warn("exchanger not configured, passing through",
 			"host", host, "audience", audience)
@@ -268,7 +273,7 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 		}
 	}
 
-	// 7. Cache result
+	// Cache result
 	if a.cache != nil && resp.ExpiresIn > 0 {
 		a.cache.Set(subjectToken, audience, resp.AccessToken,
 			time.Duration(resp.ExpiresIn)*time.Second)
@@ -280,45 +285,55 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 	return &OutboundResult{Action: ActionReplaceToken, Token: resp.AccessToken}
 }
 
-func (a *Auth) handleBroker(ctx context.Context, resolved *routing.ResolvedRoute, host string) *OutboundResult {
-	// Extract headers from context
-	headers := HeadersFromContext(ctx)
-	if headers == nil {
-		headers = make(map[string]string)
-	}
-
-	sessionKey := headers["x-oauth-session-key"]
-	userID := headers["x-user-id"]
-
-	if sessionKey == "" || userID == "" {
-		a.log.Warn("missing oauth session headers for broker route",
-			"has_session_key", sessionKey != "",
-			"has_user_id", userID != "")
+func (a *Auth) handleBrokerRoute(ctx context.Context, resolved *routing.ResolvedRoute, host string) *OutboundResult {
+	if a.tokenBrokerClient == nil {
+		a.log.Error("broker route but no Token Broker client configured", "host", host)
 		return &OutboundResult{
 			Action:     ActionDeny,
-			DenyStatus: http.StatusForbidden,
+			DenyStatus: http.StatusServiceUnavailable,
+			DenyReason: "Token Broker not configured",
+		}
+	}
+	return a.handleBroker(ctx, resolved, host)
+}
+
+func (a *Auth) handleBroker(ctx context.Context, resolved *routing.ResolvedRoute, host string) *OutboundResult {
+	// Extract JWT token from Authorization header
+	headers := HeadersFromContext(ctx)
+	authHeader := headers["authorization"]
+	if authHeader == "" {
+		a.log.Warn("missing Authorization header for broker route")
+		return &OutboundResult{
+			Action:     ActionDeny,
+			DenyStatus: http.StatusUnauthorized,
 			DenyReason: "Failed to obtain user authorization for this MCP server.",
 			Broker:     true,
 		}
 	}
 
-	// Derive MCP server URL from host if not in headers
-	mcpServerURL := headers["x-mcp-server-url"]
-	if mcpServerURL == "" {
-		mcpServerURL = "http://" + host
+	token := extractBearer(authHeader)
+	if token == "" {
+		a.log.Warn("malformed Authorization header for broker route")
+		return &OutboundResult{
+			Action:     ActionDeny,
+			DenyStatus: http.StatusUnauthorized,
+			DenyReason: "Failed to obtain user authorization for this MCP server.",
+			Broker:     true,
+		}
 	}
 
+	// Derive target server URL from destination host
+	serverURL := "http://" + host
+
 	a.log.Info("acquiring token from Token Broker",
-		"session_key", sessionKey,
-		"user_id", userID,
-		"mcp_server", mcpServerURL)
+		"server_url", serverURL)
 
 	// Call Token Broker (blocks until token available)
-	token, err := a.tokenBrokerClient.AcquireToken(ctx, resolved.TokenBrokerURL, sessionKey, userID, mcpServerURL)
+	// The broker will extract user_id and session_key from the token
+	brokerToken, err := a.tokenBrokerClient.AcquireToken(ctx, resolved.TokenBrokerURL, token, serverURL)
 	if err != nil {
 		a.log.Error("token broker acquisition failed",
-			"session_key", sessionKey,
-			"mcp_server", mcpServerURL,
+			"server_url", serverURL,
 			"error", err)
 		return &OutboundResult{
 			Action:     ActionDeny,
@@ -329,10 +344,9 @@ func (a *Auth) handleBroker(ctx context.Context, resolved *routing.ResolvedRoute
 	}
 
 	a.log.Info("token acquired from Token Broker",
-		"session_key", sessionKey,
-		"mcp_server", mcpServerURL)
+		"server_url", serverURL)
 
-	return &OutboundResult{Action: ActionReplaceToken, Token: token}
+	return &OutboundResult{Action: ActionReplaceToken, Token: brokerToken}
 }
 
 func (a *Auth) handleNoToken(ctx context.Context, audience, scopes string) *OutboundResult {
@@ -383,4 +397,61 @@ func extractBearer(authHeader string) string {
 		return authHeader[7:]
 	}
 	return ""
+}
+
+// jwtClaims represents the JWT claims we need to extract
+type jwtClaims struct {
+	JTI               string `json:"jti"`                // JWT ID - used as session_key
+	Sub               string `json:"sub"`                // Subject (user ID)
+	PreferredUsername string `json:"preferred_username"` // Username - preferred for user_id
+}
+
+// extractJWTClaims extracts claims from a JWT token without verifying the signature.
+// This is acceptable for internal communication where the token has already been validated by the backend.
+func extractJWTClaims(token string) (*jwtClaims, error) {
+	// Step 1: Split token into parts
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid JWT format: expected 3 parts, got %d", len(parts))
+	}
+
+	// Step 2: Decode payload (second part)
+	payload := parts[1]
+	// Add padding if needed for base64 decoding
+	if l := len(payload) % 4; l > 0 {
+		payload += strings.Repeat("=", 4-l)
+	}
+
+	payloadBytes, err := base64.URLEncoding.DecodeString(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode JWT payload: %w", err)
+	}
+
+	// Step 3: Parse JSON claims
+	var claims jwtClaims
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return nil, fmt.Errorf("failed to parse JWT claims: %w", err)
+	}
+
+	return &claims, nil
+}
+
+// getUserID extracts the user ID from JWT claims.
+// Prefers preferred_username, falls back to sub.
+func getUserID(claims *jwtClaims) string {
+	if claims.PreferredUsername != "" {
+		return claims.PreferredUsername
+	}
+	return claims.Sub
+}
+
+// extractUUIDFromJTI extracts the UUID from Keycloak's jti claim.
+// Keycloak's jti format is "<prefix>:<uuid>", we need just the UUID part.
+func extractUUIDFromJTI(jti string) string {
+	// Find the last colon and return everything after it
+	if idx := strings.LastIndex(jti, ":"); idx != -1 {
+		return jti[idx+1:]
+	}
+	// If no colon found, return the whole jti (already a UUID)
+	return jti
 }

@@ -65,7 +65,7 @@ func TestCheck_ValidToken_Exchange(t *testing.T) {
 	mv := &mockVerifier{claims: &validation.Claims{
 		Subject: "user", Audience: []string{"caller-agent"},
 	}}
-	router, _ := routing.NewRouter("exchange", []routing.Route{})
+	router, _ := routing.NewRouter("exchange", "", []routing.Route{})
 	exchanger := exchange.NewClient(exchangeSrv.URL, &exchange.ClientSecretAuth{
 		ClientID: "svc", ClientSecret: "secret",
 	})

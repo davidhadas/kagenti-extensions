@@ -43,10 +43,10 @@ func (m *mockStream) Recv() (*extprocv3.ProcessingRequest, error) {
 	return req, nil
 }
 func (m *mockStream) SetHeader(metadata.MD) error  { return nil }
-func (m *mockStream) SendHeader(metadata.MD) error  { return nil }
-func (m *mockStream) SetTrailer(metadata.MD)         {}
-func (m *mockStream) SendMsg(any) error              { return nil }
-func (m *mockStream) RecvMsg(any) error              { return nil }
+func (m *mockStream) SendHeader(metadata.MD) error { return nil }
+func (m *mockStream) SetTrailer(metadata.MD)       {}
+func (m *mockStream) SendMsg(any) error            { return nil }
+func (m *mockStream) RecvMsg(any) error            { return nil }
 
 type mockVerifier struct {
 	claims *validation.Claims
@@ -204,7 +204,7 @@ func TestExtProc_Outbound_Exchange(t *testing.T) {
 	}))
 	defer exchangeSrv.Close()
 
-	router, _ := routing.NewRouter("exchange", []routing.Route{})
+	router, _ := routing.NewRouter("exchange", "", []routing.Route{})
 	exchanger := exchange.NewClient(exchangeSrv.URL, &exchange.ClientSecretAuth{
 		ClientID: "agent", ClientSecret: "secret",
 	})
@@ -244,7 +244,7 @@ func TestExtProc_Outbound_Exchange(t *testing.T) {
 }
 
 func TestExtProc_Outbound_Passthrough(t *testing.T) {
-	router, _ := routing.NewRouter("passthrough", []routing.Route{})
+	router, _ := routing.NewRouter("passthrough", "", []routing.Route{})
 	a := auth.New(auth.Config{Router: router})
 	srv := &Server{Auth: a}
 
@@ -274,7 +274,7 @@ func TestExtProc_Outbound_Passthrough(t *testing.T) {
 }
 
 func TestExtProc_Outbound_Deny(t *testing.T) {
-	router, _ := routing.NewRouter("exchange", []routing.Route{})
+	router, _ := routing.NewRouter("exchange", "", []routing.Route{})
 	a := auth.New(auth.Config{
 		Router:        router,
 		NoTokenPolicy: auth.NoTokenPolicyDeny,

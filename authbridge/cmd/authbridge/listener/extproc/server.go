@@ -89,27 +89,10 @@ func (s *Server) handleOutbound(ctx context.Context, headers *corev3.HeaderMap) 
 		host = getHeader(headers, "host")
 	}
 
-	// Extract broker route headers and inject into context
-	extraHeaders := make(map[string]string)
-	if sessionKey := getHeader(headers, "x-oauth-session-key"); sessionKey != "" {
-		extraHeaders["x-oauth-session-key"] = sessionKey
-	}
-	if userID := getHeader(headers, "x-user-id"); userID != "" {
-		extraHeaders["x-user-id"] = userID
-	}
-	if mcpServerURL := getHeader(headers, "x-mcp-server-url"); mcpServerURL != "" {
-		extraHeaders["x-mcp-server-url"] = mcpServerURL
-	}
-
-	// Inject headers into context
-	if len(extraHeaders) > 0 {
-		ctx = auth.ContextWithHeaders(ctx, extraHeaders)
-	}
-
 	result := s.Auth.HandleOutbound(ctx, authHeader, host)
 
-	// Internal Kagenti headers to strip before forwarding upstream
-	headersToRemove := []string{"x-oauth-session-key", "x-user-id", "x-mcp-server-url"}
+	// No internal broker headers need to be stripped before forwarding upstream
+	headersToRemove := []string{}
 
 	switch result.Action {
 	case auth.ActionReplaceToken:

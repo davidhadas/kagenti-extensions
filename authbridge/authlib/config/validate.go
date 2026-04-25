@@ -121,10 +121,9 @@ func warnUnusual(cfg *Config) {
 // ValidateOutboundPolicy checks that default_policy is a valid value.
 func ValidateOutboundPolicy(policy string) error {
 	switch policy {
-	case "exchange", "passthrough", "":
+	case "exchange", "passthrough", "broker", "":
 		return nil
 	default:
-		return fmt.Errorf("unknown outbound.default_policy %q (valid: exchange, passthrough)", policy)
+		return fmt.Errorf("unknown outbound.default_policy %q (valid: exchange, passthrough, broker)", policy)
 	}
 }
-

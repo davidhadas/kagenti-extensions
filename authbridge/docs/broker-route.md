@@ -11,12 +11,16 @@ The Token Broker is treated as a black box. AuthBridge calls a single blocking e
 Add a `broker` route to `routes.yaml`:
 
 ```yaml
-- host: "mcp-server-service"
-  action: "broker"
-  token_broker_url: "http://token-broker-service:8190"
+outbound:
+  broker_url: "http://token-broker-service:8190"
+
+routes:
+  rules:
+    - host: "target-service"
+      action: "broker"
 ```
 
-`token_broker_url` is required. `target_audience` and `token_scopes` are not used.
+[`broker_url`](AuthBridge/authlib/config/config.go:35) is configured globally under [`outbound`](AuthBridge/authlib/config/config.go:30). Broker routes do not use [`target_audience`](AuthBridge/authlib/config/config.go:74) or [`token_scopes`](AuthBridge/authlib/config/config.go:75).
 
 ### Route Actions Summary
 
@@ -24,18 +28,18 @@ Add a `broker` route to `routes.yaml`:
 |--------|---------|-----------------|
 | `exchange` (default) | RFC 8693 token exchange against an OAuth token endpoint | `target_audience`, `token_scopes` |
 | `passthrough` | Forward request without token handling | (none) |
-| `broker` | Acquire token from an external Token Broker | `token_broker_url` |
+| `broker` | Acquire token from an external Token Broker | global [`broker_url`](AuthBridge/authlib/config/config.go:35) |
 
 ## How It Works
 
 When an outbound request matches a `broker` route:
 
-1. AuthBridge extracts `x-oauth-session-key` and `x-user-id` headers from the request.
-2. The MCP server URL is derived from the request's destination host, or from the `x-mcp-server-url` header if present.
-3. AuthBridge calls `POST {token_broker_url}/sessions/{session_key}/token` with the user ID and MCP server URL as headers. This call **blocks** until a token is available or an error occurs.
-4. On success, AuthBridge injects `Authorization: Bearer {token}` into the request (same as the `exchange` action).
-5. On failure, AuthBridge returns an MCP JSON-RPC error response to the caller.
-6. Internal headers (`x-oauth-session-key`, `x-user-id`, `x-mcp-server-url`) are stripped from the request before it is forwarded upstream.
+1. AuthBridge reads the outbound [`Authorization`](AuthBridge/authlib/auth/auth.go:308) header and extracts the bearer token.
+2. The target server URL is derived from the request destination host.
+3. AuthBridge calls [`POST {broker_url}/sessions/token`](AuthBridge/authlib/tokenbroker/client.go:31) with the original bearer token in [`Authorization`](AuthBridge/authlib/tokenbroker/client.go:38) and the derived target server URL in [`X-Server-Url`](AuthBridge/authlib/tokenbroker/client.go:39). This call **blocks** until a token is available or an error occurs.
+4. On success, AuthBridge injects [`Authorization: Bearer {token}`](AuthBridge/cmd/authbridge/listener/extproc/server.go:140) into the forwarded request.
+5. On broker failure, AuthBridge returns an MCP JSON-RPC error response to the caller.
+6. No broker-specific request header from the agent is required or forwarded upstream.
 
 The caller (AI Agent) never sees the token acquisition process.
 
@@ -44,15 +48,15 @@ The caller (AI Agent) never sees the token acquisition process.
 AuthBridge calls a single endpoint on the Token Broker:
 
 ```
-POST {token_broker_url}/sessions/{session_key}/token
+POST {broker_url}/sessions/token
 ```
 
 ### Request Headers
 
 | Header | Description |
 |--------|-------------|
-| `X-User-ID` | User identifier for the token request |
-| `X-Mcp-Server-Url` | Target MCP server URL |
+| `Authorization` | Bearer token from the outbound request |
+| `X-Server-Url` | Target server URL |
 
 ### Success Response (200)
 
@@ -89,32 +93,34 @@ When token acquisition fails, AuthBridge returns an MCP JSON-RPC error:
 
 | Condition | HTTP Status | Cause |
 |-----------|-------------|-------|
-| Missing `x-oauth-session-key` or `x-user-id` headers | 403 | Caller did not propagate required headers |
+| Missing or malformed [`Authorization`](AuthBridge/authlib/auth/auth.go:308) header | 401 | Outbound request did not carry a valid bearer token |
 | Token Broker returned an error | 403 | Broker could not acquire a token |
-| No Token Broker client configured | 503 | Misconfiguration: `broker` route exists but client was not initialized |
+| No Token Broker client configured | 503 | Misconfiguration: broker flow was selected but no broker client was initialized |
 
 ## Configuration Validation
 
 At startup, the router validates all routes:
 
-- A route with `action: "broker"` that is missing `token_broker_url` causes a startup error.
+- A broker configuration without global [`broker_url`](AuthBridge/authlib/config/config.go:35) cannot function correctly.
 - A route with an unrecognized `action` value causes a startup error.
 
 ## Header Propagation
 
-The caller must include `x-oauth-session-key` and `x-user-id` in outbound requests that will match a `broker` route. These headers are set by the Backend when forwarding tasks to the Agent and must be propagated through any Agent-to-Agent calls.
+The caller must include an outbound [`Authorization`](AuthBridge/authlib/auth/auth.go:308) header for requests that will match a `broker` route.
 
-The ext_proc listener extracts these headers and passes them to `HandleOutbound` via context. No changes to Envoy configuration are required -- Envoy already sends all request headers to ext_proc.
+AuthBridge derives the broker target server URL from the outbound request host in [`handleBroker()`](AuthBridge/authlib/auth/auth.go:300).
+
+The ext_proc listener passes the outbound [`Authorization`](AuthBridge/cmd/authbridge/listener/extproc/server.go:86) header and destination host to [`HandleOutbound()`](AuthBridge/cmd/authbridge/listener/extproc/server.go:92). No agent-provided broker target header is used.
 
 ## Code Changes
 
 | File | Change |
 |------|--------|
-| `authlib/routing/router.go` | `Route` gains `TokenBrokerURL`; `ResolvedRoute` gains `Broker` + `TokenBrokerURL`; `Resolve` handles `"broker"`; `NewRouter` validates config |
-| `authlib/tokenbroker/client.go` (new) | HTTP client for Token Broker `POST /sessions/{key}/token` endpoint |
-| `authlib/auth/auth.go` | `tokenBrokerClient` field; `handleBroker` method; new branch in `HandleOutbound` before exchange logic |
-| `authlib/auth/context.go` (new) | `ContextWithHeaders` / `HeadersFromContext` for passing extra headers via context |
-| `authlib/auth/result.go` | `Broker bool` on `OutboundResult` (controls error format in ext_proc) |
-| `authlib/config/config.go` | `TokenBrokerURL` on `RouteConfig`; `"broker"` as valid action |
-| `authlib/config/resolve.go` | Wires `tokenbroker.NewClient()`; passes `TokenBrokerURL` through to routing |
-| `cmd/authbridge/listener/extproc/server.go` | Extracts `x-oauth-session-key`, `x-user-id`, `x-mcp-server-url`; injects into context; strips before forwarding; MCP JSON-RPC error format for broker denials |
+| `authlib/routing/router.go` | Resolves [`"broker"`](AuthBridge/docs/broker-route.md:27) actions through the routing layer |
+| `authlib/tokenbroker/client.go` | HTTP client for the Token Broker [`POST /sessions/token`](AuthBridge/authlib/tokenbroker/client.go:31) endpoint |
+| `authlib/auth/auth.go` | Broker flow in [`handleBroker()`](AuthBridge/authlib/auth/auth.go:300); derives target URL and calls the broker |
+| `authlib/auth/context.go` | [`ContextWithHeaders`](AuthBridge/docs/broker-route.md:117) / [`HeadersFromContext`](AuthBridge/docs/broker-route.md:117) for passing extra headers via context |
+| `authlib/auth/result.go` | [`Broker bool`](AuthBridge/docs/broker-route.md:118) on outbound results to control broker-specific denial formatting |
+| `authlib/config/config.go` | Global [`broker_url`](AuthBridge/authlib/config/config.go:35) in outbound config |
+| `authlib/config/resolve.go` | Wires [`tokenbroker.NewClient()`](AuthBridge/docs/broker-route.md:119) and routing into the auth layer |
+| `cmd/authbridge/listener/extproc/server.go` | Passes outbound authorization and host to auth handling and returns MCP JSON-RPC errors for broker denials |

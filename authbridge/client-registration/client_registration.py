@@ -223,7 +223,10 @@ def add_scope_to_platform_clients(
                 )
 
 
-client_name = get_env_var("CLIENT_NAME")
+# Check if CLIENT_NAME is set, exit silently if not
+client_name = os.environ.get("CLIENT_NAME")
+if not client_name or client_name.strip() == "":
+    exit(0)
 
 # If SPIFFE is enabled, use the client ID from the SVID JWT.
 # Otherwise, use the client name as the client ID.
@@ -258,12 +261,9 @@ try:
     # - "client-secret": Traditional client_secret authentication (default)
     # - "federated-jwt": JWT-SVID authentication via SPIFFE identity provider
     CLIENT_AUTH_TYPE = get_env_var("CLIENT_AUTH_TYPE", "client-secret")
-except ValueError as e:
-    print(
-        f"Expected environment variable missing. Skipping client registration of {client_id}."
-    )
-    print(e)
-    exit(1)
+except ValueError:
+    # Silently exit if required environment variables are missing
+    exit(0)
 
 if not KEYCLOAK_CLIENT_REGISTRATION_ENABLED:
     print(

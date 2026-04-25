@@ -210,17 +210,16 @@ func resolveRouter(cfg *Config) (*routing.Router, error) {
 	for _, rc := range cfg.Routes.Rules {
 		action := rc.Action
 		if action == "" && rc.Passthrough {
-			action = "passthrough" // backwards compatibility
+			action = routing.ActionPassthrough // backwards compatibility
 		}
 		rules = append(rules, routing.Route{
-			Host:           rc.Host,
-			Audience:       rc.TargetAudience,
-			Scopes:         rc.TokenScopes,
-			TokenEndpoint:  rc.TokenURL,
-			Action:         action,
-			TokenBrokerURL: rc.TokenBrokerURL,
+			Host:          rc.Host,
+			Audience:      rc.TargetAudience,
+			Scopes:        rc.TokenScopes,
+			TokenEndpoint: rc.TokenURL,
+			Action:        action,
 		})
 	}
 
-	return routing.NewRouter(cfg.Outbound.DefaultPolicy, rules)
+	return routing.NewRouter(cfg.Outbound.DefaultPolicy, cfg.Outbound.BrokerURL, rules)
 }

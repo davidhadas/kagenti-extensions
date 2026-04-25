@@ -90,7 +90,7 @@ outbound:
   token_url: "${TOKEN_URL}"                  # or derived from keycloak_url + keycloak_realm
   keycloak_url: "${KEYCLOAK_URL}"            # alternative to explicit token_url
   keycloak_realm: "${KEYCLOAK_REALM}"        # used with keycloak_url
-  default_policy: "passthrough"              # passthrough (default) or exchange
+  default_policy: "passthrough"              # passthrough (default), exchange, or broker
 identity:
   type: spiffe                               # spiffe or client-secret
   client_id: "${CLIENT_ID}"                  # or use client_id_file

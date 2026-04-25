@@ -68,9 +68,6 @@ sleep 2
     fi
     echo "$CLIENT_ID" > /shared/client-id.txt
     echo "[AuthBridge] Client ID (SPIFFE ID): $CLIENT_ID"
-  else
-    echo "$CLIENT_NAME" > /shared/client-id.txt
-    echo "[AuthBridge] Client ID: $CLIENT_NAME"
   fi
 
   if [ "${CLIENT_REGISTRATION_ENABLED:-}" != "false" ]; then

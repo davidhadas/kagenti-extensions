@@ -99,7 +99,7 @@ with protocol-specific listeners in `cmd/authbridge/listener/`:
 - Default policy is **passthrough** -- outbound requests pass through unchanged unless a route matches
 - Uses a **route resolver** to match the request's `Host` header against patterns in `authproxy-routes` ConfigMap
 - If a route matches: reads `target_audience` and `token_scopes` from the route, obtains a token via `client_credentials` grant, and injects it as `Authorization: Bearer <token>`
-- If no route matches: applies the default outbound policy (`passthrough` or `exchange`)
+- If no route matches: applies the default outbound policy (`passthrough`, `exchange`, or `broker`)
 - Returns 503 if exchange fails for a routed host (prevents unauthenticated calls)
 - The `DEFAULT_OUTBOUND_POLICY` env var controls the fallback behavior (default: `passthrough`)
 
@@ -120,7 +120,7 @@ with protocol-specific listeners in `cmd/authbridge/listener/`:
 - `ISSUER`: explicit env var, or auto-derived from `KEYCLOAK_URL` + `KEYCLOAK_REALM` (i.e. `{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}`)
 - Inbound audience validation uses `CLIENT_ID` (from `/shared/client-id.txt` or `CLIENT_ID` env var) -- automatic, per-agent
 - Outbound route config from `/etc/authproxy/routes.yaml` (default; override with `ROUTES_CONFIG_PATH` env var in standalone deployments). Target audience and scopes are configured per-route only.
-- Default outbound policy from `DEFAULT_OUTBOUND_POLICY` env var: `"passthrough"` (default) or `"exchange"`
+- Default outbound policy from `DEFAULT_OUTBOUND_POLICY` env var: `"passthrough"` (default), `"exchange"`, or `"broker"`
 - JWKS URL is derived from TOKEN_URL: replaces `/token` suffix with `/certs`
 
 **Key library packages (authlib/):**

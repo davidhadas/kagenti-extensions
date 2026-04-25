@@ -24,18 +24,19 @@ func NewClient() *Client {
 	}
 }
 
-// AcquireToken calls the Token Broker to get a token for the given session, user, and MCP server.
+// AcquireToken calls the Token Broker to get a token for the given target server.
+// The broker extracts user-id and session-key from the provided JWT token.
 // Blocks until a token is available or the context is cancelled.
-func (c *Client) AcquireToken(ctx context.Context, tokenBrokerURL, sessionKey, userID, mcpServerURL string) (string, error) {
-	url := fmt.Sprintf("%s/sessions/%s/token", tokenBrokerURL, sessionKey)
+func (c *Client) AcquireToken(ctx context.Context, tokenBrokerURL, token, serverURL string) (string, error) {
+	url := fmt.Sprintf("%s/sessions/token", tokenBrokerURL)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 	if err != nil {
 		return "", fmt.Errorf("creating request: %w", err)
 	}
 
-	req.Header.Set("X-User-ID", userID)
-	req.Header.Set("X-Mcp-Server-Url", mcpServerURL)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Server-Url", serverURL)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

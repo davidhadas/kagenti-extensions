@@ -9,24 +9,29 @@ import (
 	"github.com/gobwas/glob"
 )
 
+// Route action types.
+const (
+	ActionExchange    = "exchange"
+	ActionPassthrough = "passthrough"
+	ActionBroker      = "broker"
+)
+
 // Route defines token exchange parameters for requests to a matching host.
 type Route struct {
-	Host           string `yaml:"host"`
-	Audience       string `yaml:"target_audience,omitempty"`
-	Scopes         string `yaml:"token_scopes,omitempty"`
-	TokenEndpoint  string `yaml:"token_url,omitempty"`
-	Action         string `yaml:"action,omitempty"`           // "exchange", "passthrough", or "broker"
-	TokenBrokerURL string `yaml:"token_broker_url,omitempty"` // required when action == "broker"
+	Host          string `yaml:"host"`
+	Audience      string `yaml:"target_audience,omitempty"`
+	Scopes        string `yaml:"token_scopes,omitempty"`
+	TokenEndpoint string `yaml:"token_url,omitempty"`
+	Action        string `yaml:"action,omitempty"` // ActionExchange, ActionPassthrough, or ActionBroker
 }
 
 // ResolvedRoute is the result of resolving a host against the router.
 type ResolvedRoute struct {
-	Matched        bool // true if a configured route matched; false for default action fallback
+	Matched        bool   // true if a configured route matched; false for default action fallback
+	Action         string // ActionExchange, ActionPassthrough, or ActionBroker
 	Audience       string
 	Scopes         string
 	TokenEndpoint  string
-	Passthrough    bool
-	Broker         bool   // true when action == "broker"
 	TokenBrokerURL string // Token Broker base URL for broker routes
 }
 
@@ -41,24 +46,29 @@ type compiledRoute struct {
 type Router struct {
 	routes        []compiledRoute
 	defaultAction string // "exchange" or "passthrough"
+	brokerURL     string // system-wide token broker URL for broker routes
 }
 
 // NewRouter creates a router from the given routes.
-// defaultAction is "exchange" or "passthrough" (applied when no route matches).
+// defaultAction is "exchange", "passthrough", or "broker" (applied when no route matches).
+// brokerURL is the system-wide token broker service URL for broker routes.
 // Returns an error if any host pattern is invalid.
-func NewRouter(defaultAction string, rules []Route) (*Router, error) {
+func NewRouter(defaultAction string, brokerURL string, rules []Route) (*Router, error) {
 	if defaultAction == "" {
-		defaultAction = "passthrough"
+		defaultAction = ActionPassthrough
+	}
+	// Validate defaultAction
+	switch defaultAction {
+	case ActionExchange, ActionPassthrough, ActionBroker:
+		// valid
+	default:
+		return nil, fmt.Errorf("invalid defaultAction %q (valid: exchange, passthrough, broker)", defaultAction)
 	}
 	compiled := make([]compiledRoute, 0, len(rules))
 	for i, r := range rules {
-		// Validate broker routes have token_broker_url
-		if r.Action == "broker" && r.TokenBrokerURL == "" {
-			return nil, fmt.Errorf("route %d (host %q): action \"broker\" requires token_broker_url", i, r.Host)
-		}
 		// Validate action is a known value
 		switch r.Action {
-		case "", "exchange", "passthrough", "broker":
+		case "", ActionExchange, ActionPassthrough, ActionBroker:
 			// valid
 		default:
 			return nil, fmt.Errorf("route %d (host %q): unknown action %q", i, r.Host, r.Action)
@@ -74,7 +84,7 @@ func NewRouter(defaultAction string, rules []Route) (*Router, error) {
 			route:   r,
 		})
 	}
-	return &Router{routes: compiled, defaultAction: defaultAction}, nil
+	return &Router{routes: compiled, defaultAction: defaultAction, brokerURL: brokerURL}, nil
 }
 
 // Resolve returns the exchange configuration for the given host.
@@ -88,32 +98,42 @@ func (r *Router) Resolve(host string) *ResolvedRoute {
 		if entry.glob.Match(host) {
 			action := entry.route.Action
 			if action == "" {
-				action = "exchange"
+				action = ActionExchange
 			}
 			switch action {
-			case "passthrough":
-				return &ResolvedRoute{
-					Matched:     true,
-					Passthrough: true,
-				}
-			case "broker":
-				return &ResolvedRoute{
-					Matched:        true,
-					Broker:         true,
-					TokenBrokerURL: entry.route.TokenBrokerURL,
-				}
-			default: // "exchange"
+			case ActionExchange:
 				return &ResolvedRoute{
 					Matched:       true,
+					Action:        ActionExchange,
 					Audience:      entry.route.Audience,
 					Scopes:        entry.route.Scopes,
 					TokenEndpoint: entry.route.TokenEndpoint,
 				}
+			case ActionBroker:
+				return &ResolvedRoute{
+					Matched:        true,
+					Action:         ActionBroker,
+					TokenBrokerURL: r.brokerURL,
+				}
+			default: // ActionPassthrough
+				return &ResolvedRoute{
+					Matched: true,
+					Action:  ActionPassthrough,
+				}
 			}
 		}
 	}
-	if r.defaultAction == "exchange" {
-		return &ResolvedRoute{Matched: false}
+	// Handle default action when no route matches
+	switch r.defaultAction {
+	case ActionExchange:
+		return &ResolvedRoute{Matched: false, Action: ActionExchange}
+	case ActionBroker:
+		return &ResolvedRoute{
+			Matched:        false,
+			Action:         ActionBroker,
+			TokenBrokerURL: r.brokerURL,
+		}
+	default: // ActionPassthrough
+		return nil
 	}
-	return nil
 }

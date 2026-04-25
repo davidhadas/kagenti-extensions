@@ -7,7 +7,7 @@ import (
 )
 
 func TestResolve_ExactMatch(t *testing.T) {
-	r, err := NewRouter("passthrough", []Route{
+	r, err := NewRouter("passthrough", "", []Route{
 		{Host: "auth-target-service", Audience: "auth-target", Scopes: "openid"},
 	})
 	if err != nil {
@@ -30,7 +30,7 @@ func TestResolve_ExactMatch(t *testing.T) {
 }
 
 func TestResolve_GlobMatch(t *testing.T) {
-	r, _ := NewRouter("passthrough", []Route{
+	r, _ := NewRouter("passthrough", "", []Route{
 		{Host: "*.example.com", Audience: "example"},
 	})
 
@@ -44,7 +44,7 @@ func TestResolve_GlobMatch(t *testing.T) {
 }
 
 func TestResolve_PortStripping(t *testing.T) {
-	r, _ := NewRouter("passthrough", []Route{
+	r, _ := NewRouter("passthrough", "", []Route{
 		{Host: "service", Audience: "svc"},
 	})
 	if resolved := r.Resolve("service:8081"); resolved == nil || resolved.Audience != "svc" {
@@ -53,7 +53,7 @@ func TestResolve_PortStripping(t *testing.T) {
 }
 
 func TestResolve_FirstMatchWins(t *testing.T) {
-	r, _ := NewRouter("passthrough", []Route{
+	r, _ := NewRouter("passthrough", "", []Route{
 		{Host: "service", Audience: "first"},
 		{Host: "service", Audience: "second"},
 	})
@@ -64,7 +64,7 @@ func TestResolve_FirstMatchWins(t *testing.T) {
 }
 
 func TestResolve_NoMatch_Passthrough(t *testing.T) {
-	r, _ := NewRouter("passthrough", []Route{
+	r, _ := NewRouter("passthrough", "", []Route{
 		{Host: "known-service", Audience: "known"},
 	})
 	if resolved := r.Resolve("unknown-service"); resolved != nil {
@@ -73,7 +73,7 @@ func TestResolve_NoMatch_Passthrough(t *testing.T) {
 }
 
 func TestResolve_NoMatch_Exchange(t *testing.T) {
-	r, _ := NewRouter("exchange", []Route{})
+	r, _ := NewRouter(ActionExchange, "", []Route{})
 	resolved := r.Resolve("any-service")
 	if resolved == nil {
 		t.Fatal("expected non-nil for exchange default")
@@ -81,23 +81,23 @@ func TestResolve_NoMatch_Exchange(t *testing.T) {
 	if resolved.Matched {
 		t.Error("expected Matched=false for default action fallback")
 	}
-	if resolved.Passthrough {
-		t.Error("expected passthrough=false for exchange default")
+	if resolved.Action != ActionExchange {
+		t.Errorf("expected action=exchange for exchange default, got %q", resolved.Action)
 	}
 }
 
 func TestResolve_PassthroughAction(t *testing.T) {
-	r, _ := NewRouter("passthrough", []Route{
-		{Host: "internal-svc", Action: "passthrough"},
+	r, _ := NewRouter(ActionPassthrough, "", []Route{
+		{Host: "internal-svc", Action: ActionPassthrough},
 	})
 	resolved := r.Resolve("internal-svc")
-	if resolved == nil || !resolved.Passthrough {
-		t.Error("expected passthrough=true for passthrough action")
+	if resolved == nil || resolved.Action != ActionPassthrough {
+		t.Errorf("expected action=passthrough for passthrough action, got %+v", resolved)
 	}
 }
 
 func TestNewRouter_InvalidPattern(t *testing.T) {
-	_, err := NewRouter("passthrough", []Route{
+	_, err := NewRouter("passthrough", "", []Route{
 		{Host: "[invalid"},
 	})
 	if err == nil {

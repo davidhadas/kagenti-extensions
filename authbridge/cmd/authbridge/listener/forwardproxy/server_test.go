@@ -47,7 +47,7 @@ func TestForwardProxy_Exchange(t *testing.T) {
 	}))
 	defer backend.Close()
 
-	router, _ := routing.NewRouter("exchange", []routing.Route{})
+	router, _ := routing.NewRouter("exchange", "", []routing.Route{})
 	exchanger := exchange.NewClient(exchangeSrv.URL, &exchange.ClientSecretAuth{
 		ClientID: "agent", ClientSecret: "secret",
 	})
@@ -98,7 +98,7 @@ func TestForwardProxy_CONNECT_Rejected(t *testing.T) {
 }
 
 func TestForwardProxy_Deny(t *testing.T) {
-	router, _ := routing.NewRouter("exchange", []routing.Route{})
+	router, _ := routing.NewRouter("exchange", "", []routing.Route{})
 	a := auth.New(auth.Config{
 		Router:        router,
 		NoTokenPolicy: auth.NoTokenPolicyDeny,

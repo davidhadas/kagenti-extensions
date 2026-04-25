@@ -32,6 +32,7 @@ type OutboundConfig struct {
 	KeycloakURL   string `yaml:"keycloak_url"`   // alternative: derives token_url and issuer
 	KeycloakRealm string `yaml:"keycloak_realm"` // used with keycloak_url
 	DefaultPolicy string `yaml:"default_policy"` // "exchange" or "passthrough"
+	BrokerURL     string `yaml:"broker_url"`     // token broker service URL for broker routes
 }
 
 // IdentityConfig holds agent identity and credentials.
@@ -73,9 +74,8 @@ type RouteConfig struct {
 	TargetAudience string `yaml:"target_audience,omitempty"`
 	TokenScopes    string `yaml:"token_scopes,omitempty"`
 	TokenURL       string `yaml:"token_url,omitempty"`
-	Passthrough    bool   `yaml:"passthrough,omitempty"`      // legacy format
-	Action         string `yaml:"action,omitempty"`           // "exchange", "passthrough", or "broker"
-	TokenBrokerURL string `yaml:"token_broker_url,omitempty"` // for broker routes
+	Passthrough    bool   `yaml:"passthrough,omitempty"` // legacy format
+	Action         string `yaml:"action,omitempty"`      // "exchange", "passthrough", or "broker"
 }
 
 // Valid mode strings.
