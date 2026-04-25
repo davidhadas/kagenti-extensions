@@ -72,7 +72,7 @@ type Stats struct {
 	outboundReplaceTokens map[OutboundReplaceTokenReason]int
 }
 
-// InboundFailureReason enumerates the reasons for inbound validation failure.
+// InboundDenialReason enumerates the reasons for inbound validation failure.
 type InboundDenialReason int
 
 const (
@@ -90,11 +90,12 @@ const (
 	APPROVE_AUTHORIZED
 )
 
-// OutboundSuccessReason enumerates the rationale for outbound validation success.
+// OutboundApprovalReason enumerates the rationale for outbound validation success.
 type OutboundApprovalReason int
 
 const (
 	OUTBOUND_NO_MATCHING_ROUTE OutboundApprovalReason = iota
+	OUTBOUND_NO_EXCHANGER
 	OUTBOUND_PASSTHROUGH
 	OUTBOUND_NO_TOKEN_POLICY
 )
@@ -103,13 +104,13 @@ const (
 type OutboundDenialReason int
 
 const (
-	OUTBOUND_NO_EXCHANGER OutboundDenialReason = iota
+	OUTBOUND_CREDS_REQUESTED_NO_EXCHANGER OutboundDenialReason = iota
 	OUTBOUND_CREDENTIALS_GRANT_FAILURE
 	OUTBOUND_NO_TOKEN
 	OUTBOUND_TOKEN_EXCHANGE_FAILED
 )
 
-// OutboundDenialReason enumerates the reasons for outbound token exchange.
+// OutboundReplaceTokenReason enumerates the reasons for outbound token exchange.
 type OutboundReplaceTokenReason int
 
 const (
@@ -147,6 +148,8 @@ func (r OutboundApprovalReason) String() string {
 	switch r {
 	case OUTBOUND_NO_MATCHING_ROUTE:
 		return "no_matching_route"
+	case OUTBOUND_NO_EXCHANGER:
+		return "no_exchanger"
 	case OUTBOUND_PASSTHROUGH:
 		return "passthrough"
 	case OUTBOUND_NO_TOKEN_POLICY:
@@ -158,8 +161,8 @@ func (r OutboundApprovalReason) String() string {
 
 func (r OutboundDenialReason) String() string {
 	switch r {
-	case OUTBOUND_NO_EXCHANGER:
-		return "no_exchanger"
+	case OUTBOUND_CREDS_REQUESTED_NO_EXCHANGER:
+		return "creds_requested_no_exchanger"
 	case OUTBOUND_CREDENTIALS_GRANT_FAILURE:
 		return "credentials_grant_failure"
 	case OUTBOUND_NO_TOKEN:
@@ -449,7 +452,7 @@ func (a *Auth) handleNoToken(ctx context.Context, audience, scopes string) *Outb
 
 	case NoTokenPolicyClientCredentials:
 		if a.exchanger == nil {
-			a.IncOutboundDeny(OUTBOUND_NO_EXCHANGER)
+			a.IncOutboundDeny(OUTBOUND_CREDS_REQUESTED_NO_EXCHANGER)
 			a.log.Debug("no token, client_credentials requested but exchanger not configured",
 				"audience", audience)
 			return &OutboundResult{

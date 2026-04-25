@@ -111,6 +111,9 @@ func Load(path string) (*Config, error) {
 
 	// Default stats server address
 	if cfg.Stats.StatsAddress == "" {
+		// Note that we default to an open port, not localhost 127.0.0.1:9093,
+		// because the Kagenti UI needs to see this.  (If there are concerns
+		// about the data exposed, use TLS or redact fields.)
 		cfg.Stats.StatsAddress = ":9093"
 	}
 
