@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -49,12 +50,17 @@ func handleConfigFactory(cfg *config.Config) func(http.ResponseWriter, *http.Req
 		w.Header().Set("Content-Type", "application/json")
 		// Rather than outputting the entire config,
 		// customize the output to redact the client secret.
-		json.NewEncoder(w).Encode(config.Config{
+		err := json.NewEncoder(w).Encode(config.Config{
 			Mode:     cfg.Mode,
 			Inbound:  cfg.Inbound,
 			Outbound: cfg.Outbound,
 			Identity: config.IdentityConfig{
-				Type:             cfg.Identity.Type,
+				Type: cfg.Identity.Type,
+				// We report the ClientID unredacted.  In Kagenti, the ID will be something like
+				// "spiffe://localtest.me/ns/team1/sa/my-weather-service-with-authbridge"
+				// Although a brute force attack is possible, showing the ClientID here does
+				// not introduce new security concerns, as an attacker can already construct
+				// the ClientID from the pod's namespace and name, available in the UI.
 				ClientID:         cfg.Identity.ClientID,
 				ClientSecret:     "*redacted*",
 				ClientIDFile:     "*redacted*",
@@ -68,13 +74,19 @@ func handleConfigFactory(cfg *config.Config) func(http.ResponseWriter, *http.Req
 			Routes:   cfg.Routes,
 			Stats:    cfg.Stats,
 		})
+		if err != nil {
+			slog.Default().Info("Failed to send configuration", "err", err)
+		}
 	}
 }
 
 func handleStatsFactory(stats *auth.Stats) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(stats)
+		err := json.NewEncoder(w).Encode(stats)
+		if err != nil {
+			slog.Default().Info("Failed to send stats", "err", err)
+		}
 	}
 }
 
