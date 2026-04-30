@@ -58,6 +58,9 @@ func New(plugins []Plugin, opts ...Option) (*Pipeline, error) {
 // If any plugin returns Reject, the pipeline stops and returns that action.
 func (p *Pipeline) Run(ctx context.Context, pctx *Context) Action {
 	for _, plugin := range p.plugins {
+		if ctx.Err() != nil {
+			return Action{Type: Reject, Status: 499, Reason: "request cancelled"}
+		}
 		action := plugin.OnRequest(ctx, pctx)
 		if action.Type == Reject {
 			return action
@@ -70,6 +73,9 @@ func (p *Pipeline) Run(ctx context.Context, pctx *Context) Action {
 // The last plugin in the chain sees the response first.
 func (p *Pipeline) RunResponse(ctx context.Context, pctx *Context) Action {
 	for i := len(p.plugins) - 1; i >= 0; i-- {
+		if ctx.Err() != nil {
+			return Action{Type: Reject, Status: 499, Reason: "request cancelled"}
+		}
 		action := p.plugins[i].OnResponse(ctx, pctx)
 		if action.Type == Reject {
 			return action

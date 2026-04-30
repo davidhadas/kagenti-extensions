@@ -65,9 +65,13 @@ type SecurityExtension struct {
 // DelegationExtension tracks the token delegation chain across hops.
 type DelegationExtension struct {
 	Chain  []DelegationHop
-	Depth  int
 	Origin string // original caller's subject ID
 	Actor  string // current actor's subject ID
+}
+
+// Depth returns the number of hops in the delegation chain.
+func (d *DelegationExtension) Depth() int {
+	return len(d.Chain)
 }
 
 // DelegationHop represents one hop in the delegation chain.
@@ -81,7 +85,6 @@ type DelegationHop struct {
 // rather than mutating Chain directly — the chain is intended to be append-only.
 func (d *DelegationExtension) AppendHop(hop DelegationHop) {
 	d.Chain = append(d.Chain, hop)
-	d.Depth = len(d.Chain)
 	if d.Origin == "" {
 		d.Origin = hop.SubjectID
 	}

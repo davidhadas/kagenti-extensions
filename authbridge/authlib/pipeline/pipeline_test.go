@@ -294,8 +294,8 @@ func TestDelegationExtension_AppendHop(t *testing.T) {
 	d := &DelegationExtension{}
 
 	d.AppendHop(DelegationHop{SubjectID: "alice", Scopes: []string{"read", "write"}})
-	if d.Depth != 1 {
-		t.Errorf("depth = %d, want 1", d.Depth)
+	if d.Depth() != 1 {
+		t.Errorf("Depth() = %d, want 1", d.Depth())
 	}
 	if d.Origin != "alice" {
 		t.Errorf("origin = %q, want %q", d.Origin, "alice")
@@ -305,8 +305,8 @@ func TestDelegationExtension_AppendHop(t *testing.T) {
 	}
 
 	d.AppendHop(DelegationHop{SubjectID: "bob", Scopes: []string{"read"}})
-	if d.Depth != 2 {
-		t.Errorf("depth = %d, want 2", d.Depth)
+	if d.Depth() != 2 {
+		t.Errorf("Depth() = %d, want 2", d.Depth())
 	}
 	if d.Origin != "alice" {
 		t.Errorf("origin should stay %q, got %q", "alice", d.Origin)
@@ -323,12 +323,11 @@ func TestPipelineRun_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
+	called := false
 	p1 := &stubPlugin{
-		name: "ctx-aware",
-		onReq: func(ctx context.Context, _ *Context) Action {
-			if ctx.Err() != nil {
-				return Action{Type: Reject, Status: 499, Reason: "cancelled"}
-			}
+		name: "should-not-run",
+		onReq: func(_ context.Context, _ *Context) Action {
+			called = true
 			return Action{Type: Continue}
 		},
 	}
@@ -343,5 +342,8 @@ func TestPipelineRun_ContextCancellation(t *testing.T) {
 	}
 	if action.Status != 499 {
 		t.Errorf("status = %d, want 499", action.Status)
+	}
+	if called {
+		t.Error("plugin was called despite cancelled context")
 	}
 }
