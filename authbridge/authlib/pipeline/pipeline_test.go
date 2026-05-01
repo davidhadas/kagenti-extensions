@@ -314,8 +314,22 @@ func TestDelegationExtension_AppendHop(t *testing.T) {
 	if d.Actor != "bob" {
 		t.Errorf("actor = %q, want %q", d.Actor, "bob")
 	}
-	if len(d.Chain) != 2 {
-		t.Errorf("chain length = %d, want 2", len(d.Chain))
+	chain := d.Chain()
+	if len(chain) != 2 {
+		t.Errorf("Chain() length = %d, want 2", len(chain))
+	}
+}
+
+func TestDelegationExtension_ChainIsCopy(t *testing.T) {
+	d := &DelegationExtension{}
+	d.AppendHop(DelegationHop{SubjectID: "alice"})
+
+	chain := d.Chain()
+	chain[0].SubjectID = "tampered"
+
+	original := d.Chain()
+	if original[0].SubjectID != "alice" {
+		t.Errorf("Chain() returned reference to backing slice, mutation leaked")
 	}
 }
 

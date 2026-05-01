@@ -63,15 +63,24 @@ type SecurityExtension struct {
 }
 
 // DelegationExtension tracks the token delegation chain across hops.
+// The chain is append-only and unexported to prevent forgery or truncation.
 type DelegationExtension struct {
-	Chain  []DelegationHop
+	chain  []DelegationHop
 	Origin string // original caller's subject ID
 	Actor  string // current actor's subject ID
 }
 
+// Chain returns a copy of the delegation chain. The copy prevents callers from
+// mutating the backing slice (truncation, reordering, forgery).
+func (d *DelegationExtension) Chain() []DelegationHop {
+	out := make([]DelegationHop, len(d.chain))
+	copy(out, d.chain)
+	return out
+}
+
 // Depth returns the number of hops in the delegation chain.
 func (d *DelegationExtension) Depth() int {
-	return len(d.Chain)
+	return len(d.chain)
 }
 
 // DelegationHop represents one hop in the delegation chain.
@@ -81,10 +90,13 @@ type DelegationHop struct {
 	Timestamp time.Time
 }
 
-// AppendHop adds a hop to the delegation chain. Plugins should use this method
-// rather than mutating Chain directly — the chain is intended to be append-only.
+// AppendHop adds a hop to the delegation chain. This is the only way to extend
+// the chain — direct mutation is prevented by the unexported slice.
+//
+// AppendHop is not safe for concurrent use. The pipeline guarantees sequential
+// invocation.
 func (d *DelegationExtension) AppendHop(hop DelegationHop) {
-	d.Chain = append(d.Chain, hop)
+	d.chain = append(d.chain, hop)
 	if d.Origin == "" {
 		d.Origin = hop.SubjectID
 	}
