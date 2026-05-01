@@ -17,7 +17,6 @@ import (
 	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
 
 	"github.com/kagenti/kagenti-extensions/authbridge/authlib/pipeline"
-	"github.com/kagenti/kagenti-extensions/authbridge/authlib/routing"
 )
 
 // Server implements the Envoy ext_authz Authorization gRPC service.
@@ -40,10 +39,6 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 		host = headers["host"]
 	}
 	path := httpReq.GetPath()
-
-	// Derive audience from destination host (waypoint pattern)
-	audience := routing.ServiceNameFromHost(host)
-	_ = audience // audience derivation will be used in future waypoint-specific plugin
 
 	// Inbound validation via pipeline
 	inPctx := &pipeline.Context{
