@@ -196,6 +196,41 @@ func TestForwardProxy_BodyBuffering(t *testing.T) {
 	}
 }
 
+func TestForwardProxy_BodyTooLarge(t *testing.T) {
+	recorder := &bodyRecorderPlugin{}
+	p, err := pipeline.New([]pipeline.Plugin{recorder})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("backend should not be reached for oversized body")
+	}))
+	defer backend.Close()
+
+	srv := &Server{OutboundPipeline: p, Client: http.DefaultClient}
+	proxy := httptest.NewServer(srv.Handler())
+	defer proxy.Close()
+
+	// Send body larger than maxBodySize (1MB)
+	bigBody := strings.Repeat("x", maxBodySize+1)
+	req, _ := http.NewRequest("POST", backend.URL+"/mcp", strings.NewReader(bigBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	proxyClient := &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(mustParseURL(proxy.URL)),
+		},
+	}
+	resp, err := proxyClient.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", resp.StatusCode)
+	}
+}
+
 func TestForwardProxy_NoBodyBuffering_WhenNotNeeded(t *testing.T) {
 	a := auth.New(auth.Config{})
 	p := outboundPipelineFromAuth(t, a) // default pipeline has no body-access plugins

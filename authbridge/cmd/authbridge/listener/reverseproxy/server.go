@@ -15,6 +15,8 @@ import (
 	"github.com/kagenti/kagenti-extensions/authbridge/authlib/pipeline"
 )
 
+const maxBodySize = 1 << 20 // 1MB — matches Envoy's default per_stream_buffer_limit_bytes
+
 // Server is an HTTP reverse proxy with inbound JWT validation.
 type Server struct {
 	InboundPipeline *pipeline.Pipeline
@@ -49,7 +51,13 @@ func (s *Server) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.InboundPipeline.NeedsBody() && r.Body != nil {
-		body, _ := io.ReadAll(r.Body)
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodySize)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			slog.Warn("reverse-proxy: request body too large or unreadable", "host", r.Host, "error", err)
+			http.Error(w, `{"error":"request body too large"}`, http.StatusRequestEntityTooLarge)
+			return
+		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		pctx.Body = body
 		slog.Debug("reverse-proxy: buffered request body", "host", r.Host, "bodyLen", len(body))

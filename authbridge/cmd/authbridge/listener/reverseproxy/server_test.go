@@ -161,6 +161,37 @@ func TestReverseProxy_BodyBuffering(t *testing.T) {
 	}
 }
 
+func TestReverseProxy_BodyTooLarge(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("backend should not be reached for oversized body")
+	}))
+	defer backend.Close()
+
+	recorder := &bodyRecorderPlugin{}
+	p, err := pipeline.New([]pipeline.Plugin{recorder})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := NewServer(p, backend.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	proxy := httptest.NewServer(srv.Handler())
+	defer proxy.Close()
+
+	bigBody := strings.Repeat("x", maxBodySize+1)
+	req, _ := http.NewRequest("POST", proxy.URL+"/mcp", strings.NewReader(bigBody))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d, want 413", resp.StatusCode)
+	}
+}
+
 func TestReverseProxy_BodyNotBuffered_WhenNotNeeded(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
