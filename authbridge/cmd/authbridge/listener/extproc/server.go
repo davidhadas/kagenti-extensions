@@ -19,6 +19,8 @@ import (
 	"github.com/kagenti/kagenti-extensions/authbridge/authlib/pipeline"
 )
 
+const maxBodySize = 1 << 20 // 1MB — matches Envoy's default per_stream_buffer_limit_bytes
+
 // Server implements the Envoy ext_proc ExternalProcessor gRPC service.
 type Server struct {
 	extprocv3.UnimplementedExternalProcessorServer
@@ -30,6 +32,10 @@ type Server struct {
 func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error {
 	ctx := stream.Context()
 
+	// pendingHeaders/pendingDirection hold state between RequestHeaders and
+	// RequestBody phases. Envoy guarantees sequential message ordering per
+	// stream: RequestBody always follows its RequestHeaders, and each stream
+	// is a single request — no interleaving or stale state is possible.
 	var pendingHeaders *corev3.HeaderMap
 	var pendingDirection string
 
@@ -71,7 +77,10 @@ func (s *Server) Process(stream extprocv3.ExternalProcessor_ProcessServer) error
 		case *extprocv3.ProcessingRequest_RequestBody:
 			body := r.RequestBody.Body
 			slog.Debug("ext_proc: received request body", "direction", pendingDirection, "bodyLen", len(body))
-			if pendingDirection == "inbound" {
+			if len(body) > maxBodySize {
+				slog.Warn("ext_proc: request body too large", "direction", pendingDirection, "bodyLen", len(body))
+				resp = immediateResponse(http.StatusRequestEntityTooLarge, "request body too large")
+			} else if pendingDirection == "inbound" {
 				resp = s.handleInbound(stream, pendingHeaders, body)
 			} else {
 				resp = s.handleOutbound(stream, pendingHeaders, body)
@@ -217,6 +226,18 @@ func denyResponse(code typev3.StatusCode, body string) *extprocv3.ProcessingResp
 			ImmediateResponse: &extprocv3.ImmediateResponse{
 				Status: &typev3.HttpStatus{Code: code},
 				Body:   []byte(body),
+			},
+		},
+	}
+}
+
+func immediateResponse(httpStatus int, reason string) *extprocv3.ProcessingResponse {
+	body, _ := json.Marshal(map[string]string{"error": reason})
+	return &extprocv3.ProcessingResponse{
+		Response: &extprocv3.ProcessingResponse_ImmediateResponse{
+			ImmediateResponse: &extprocv3.ImmediateResponse{
+				Status: &typev3.HttpStatus{Code: typev3.StatusCode(httpStatus)},
+				Body:   body,
 			},
 		},
 	}

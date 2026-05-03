@@ -7,8 +7,10 @@ prompt invocations.
 ## Prerequisites
 
 - A running Kagenti cluster (Kind or OpenShift) with the Ansible installer
-  completed
-- An agent namespace (e.g., `team1`) with AuthBridge sidecars injected
+  completed. The mcp-parser plugin works in `envoy-sidecar` and
+  `proxy-sidecar` modes on any cluster type.
+- A namespace (e.g., `team1`) labeled with `kagenti-enabled: "true"` for
+  AuthBridge sidecar injection
 - An MCP-based agent already deployed (e.g., the weather agent from
   [demo-ui-advanced](../weather-agent/demo-ui-advanced.md))
 

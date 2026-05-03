@@ -481,6 +481,53 @@ func TestExtProc_BodyBuffering_Outbound(t *testing.T) {
 	}
 }
 
+func TestExtProc_BodyTooLarge(t *testing.T) {
+	recorder := &bodyRecorderPlugin{}
+	p, err := pipeline.New([]pipeline.Plugin{recorder})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outbound, err := plugins.DefaultOutboundPipeline(auth.New(auth.Config{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	srv := &Server{InboundPipeline: p, OutboundPipeline: outbound}
+
+	bigBody := make([]byte, maxBodySize+1)
+	stream := &mockStream{
+		ctx: context.Background(),
+		requests: []*extprocv3.ProcessingRequest{
+			inboundRequest(makeHeaders(
+				"x-authbridge-direction", "inbound",
+				":path", "/mcp",
+			)),
+			{
+				Request: &extprocv3.ProcessingRequest_RequestBody{
+					RequestBody: &extprocv3.HttpBody{Body: bigBody},
+				},
+			},
+		},
+	}
+
+	_ = srv.Process(stream)
+
+	if len(stream.responses) < 2 {
+		t.Fatalf("expected at least 2 responses, got %d", len(stream.responses))
+	}
+
+	// Second response should be an immediate 413 rejection
+	second := stream.responses[1]
+	ir := second.GetImmediateResponse()
+	if ir == nil {
+		t.Fatal("expected ImmediateResponse for oversized body")
+	}
+	if ir.Status.Code != 413 {
+		t.Errorf("status = %d, want 413", ir.Status.Code)
+	}
+}
+
 func TestExtProc_NoBodyBuffering_WhenNotNeeded(t *testing.T) {
 	a := auth.New(auth.Config{
 		Verifier: &mockVerifier{claims: &validation.Claims{Subject: "user"}},

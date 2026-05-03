@@ -8,6 +8,9 @@ import (
 	"github.com/kagenti/kagenti-extensions/authbridge/authlib/pipeline"
 )
 
+// MCPParser parses MCP JSON-RPC 2.0 request bodies and populates
+// pctx.Extensions.MCP with the parsed method, tool name, resource URI,
+// or prompt name for downstream policy plugins.
 type MCPParser struct{}
 
 func NewMCPParser() *MCPParser { return &MCPParser{} }
