@@ -1,0 +1,84 @@
+name: Auto-sync fork main and merge into PR branches
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 minutes
+  workflow_dispatch:
+
+jobs:
+  sync-and-merge:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.AUTO_MERGE_TOKEN }}
+
+      - name: Fetch all branches
+        run: git fetch origin '+refs/heads/*:refs/remotes/origin/*'
+
+      - name: Configure Git identity
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+
+      - name: Add upstream remote
+        run: git remote add upstream https://github.com/kagenti/kagenti-extensions.git
+
+      - name: Fetch upstream
+        run: git fetch upstream main
+
+      - name: Sync fork main with upstream main
+        run: |
+          git checkout main
+          git merge upstream/main --no-edit --allow-unrelated-histories || exit 1
+          git push origin main
+        env:
+          GITHUB_TOKEN: ${{ secrets.AUTO_MERGE_TOKEN }}
+
+      - name: Authenticate GitHub CLI
+        run: gh auth login --with-token <<< "${{ secrets.AUTO_MERGE_TOKEN }}"
+
+      - name: Get list of PRs in upstream that originate from this fork
+        id: prlist
+        run: |
+          prs=$(gh pr list \
+            --repo kagenti/kagenti-extensions \
+            --state open \
+            --json number,headRefName,headRepositoryOwner \
+            --jq '.[] | select(.headRepositoryOwner.login=="davidhadas") | "\(.number) \(.headRefName)"')
+
+          echo "prs<<EOF" >> $GITHUB_OUTPUT
+          echo "$prs" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Merge upstream main into each PR branch and comment on PR
+        run: |
+          echo "PRs to update:"
+          echo "${{ steps.prlist.outputs.prs }}"
+
+          while IFS= read -r line; do
+            if [ -z "$line" ]; then
+              continue
+            fi
+
+            pr_number=$(echo "$line" | awk '{print $1}')
+            branch=$(echo "$line" | awk '{print $2}')
+
+            echo "Updating PR #$pr_number (branch: $branch)"
+
+            git checkout "$branch"
+            git merge main --no-edit || exit 1
+            git push origin "$branch"
+
+            echo "Merged and pushed for PR #$pr_number ($branch)"
+
+            gh pr comment "$pr_number" \
+              --repo kagenti/kagenti-extensions \
+              --body "Branch **$branch** has been automatically updated with the latest changes from \`main\` in the fork."
+          done <<< "${{ steps.prlist.outputs.prs }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.AUTO_MERGE_TOKEN }}
