@@ -16,6 +16,7 @@ type Route struct {
 	Scopes        string `yaml:"token_scopes,omitempty"`
 	TokenEndpoint string `yaml:"token_url,omitempty"`
 	Action        string `yaml:"action,omitempty"` // "exchange" or "passthrough"; defaults to "exchange"
+	Scheme        string `yaml:"scheme,omitempty"` // "http" or "https"; "" = no rewrite
 }
 
 // ResolvedRoute is the result of resolving a host against the router.
@@ -25,6 +26,7 @@ type ResolvedRoute struct {
 	Scopes        string
 	TokenEndpoint string
 	Passthrough   bool
+	Scheme        string // upstream scheme override; "" = no rewrite
 }
 
 type compiledRoute struct {
@@ -82,6 +84,7 @@ func (r *Router) Resolve(host string) *ResolvedRoute {
 				Scopes:        entry.route.Scopes,
 				TokenEndpoint: entry.route.TokenEndpoint,
 				Passthrough:   action == "passthrough",
+				Scheme:        entry.route.Scheme,
 			}
 		}
 	}

@@ -89,6 +89,86 @@ func TestTokenBroker_OnRequest_RouteMatching(t *testing.T) {
 	}
 }
 
+func TestTokenBroker_SchemeOverride_SetsUpstreamScheme(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"token": "acquired-token"})
+	}))
+	defer srv.Close()
+
+	p := NewTokenBroker()
+	config := `{
+		"broker_url": "` + srv.URL + `",
+		"default_policy": "passthrough",
+		"routes": {
+			"rules": [
+				{"host": "secure-svc", "action": "broker", "scheme": "https"}
+			]
+		}
+	}`
+	if err := p.Configure(json.RawMessage(config)); err != nil {
+		t.Fatalf("Configure() error = %v", err)
+	}
+
+	pctx := &pipeline.Context{
+		Direction: pipeline.Outbound,
+		Host:      "secure-svc",
+		Scheme:    "http",
+		Headers: http.Header{
+			"Authorization": []string{"Bearer user-token"},
+		},
+	}
+	action := p.OnRequest(context.Background(), pctx)
+	if action.Type != pipeline.Continue {
+		t.Fatalf("action.Type = %v, want Continue", action.Type)
+	}
+	if pctx.UpstreamScheme != "https" {
+		t.Errorf("UpstreamScheme = %q, want %q", pctx.UpstreamScheme, "https")
+	}
+	// Verify upstream_scheme surfaced in session event Details.
+	if pctx.Extensions.Invocations == nil || len(pctx.Extensions.Invocations.Outbound) != 1 {
+		t.Fatalf("expected one invocation, got %+v", pctx.Extensions.Invocations)
+	}
+	if pctx.Extensions.Invocations.Outbound[0].Details["upstream_scheme"] != "https" {
+		t.Errorf("Details[upstream_scheme] = %q, want %q",
+			pctx.Extensions.Invocations.Outbound[0].Details["upstream_scheme"], "https")
+	}
+}
+
+func TestTokenBroker_SchemeOverride_OmittedLeavesUpstreamSchemeEmpty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"token": "acquired-token"})
+	}))
+	defer srv.Close()
+
+	p := NewTokenBroker()
+	config := `{
+		"broker_url": "` + srv.URL + `",
+		"default_policy": "passthrough",
+		"routes": {
+			"rules": [
+				{"host": "plain-svc", "action": "broker"}
+			]
+		}
+	}`
+	if err := p.Configure(json.RawMessage(config)); err != nil {
+		t.Fatalf("Configure() error = %v", err)
+	}
+
+	pctx := &pipeline.Context{
+		Host:   "plain-svc",
+		Scheme: "http",
+		Headers: http.Header{
+			"Authorization": []string{"Bearer user-token"},
+		},
+	}
+	p.OnRequest(context.Background(), pctx)
+	if pctx.UpstreamScheme != "" {
+		t.Errorf("UpstreamScheme = %q, want empty string (no rewrite)", pctx.UpstreamScheme)
+	}
+}
+
 func TestTokenBroker_OnRequest_DefaultPolicyRouting(t *testing.T) {
 	t.Run("unmatched host with broker default uses broker", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

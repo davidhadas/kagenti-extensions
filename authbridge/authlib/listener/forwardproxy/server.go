@@ -353,6 +353,13 @@ func (s *Server) serveOutbound(w http.ResponseWriter, r *http.Request, isBridge 
 	// Clear RequestURI — set by the server but must be empty for client requests
 	r.RequestURI = ""
 
+	// Apply upstream scheme override from the token-exchange route, if any.
+	// This allows a route to declare scheme: https so the agent can send
+	// plain http:// while authbridge re-originates as https://.
+	if pctx.UpstreamScheme != "" {
+		r.URL.Scheme = pctx.UpstreamScheme
+	}
+
 	client := s.Client
 	if isBridge && s.TLSBridge != nil {
 		client = s.TLSBridge.Upstream

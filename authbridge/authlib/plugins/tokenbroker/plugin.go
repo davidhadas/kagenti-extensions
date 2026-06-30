@@ -52,6 +52,7 @@ type tokenBrokerRoute struct {
 	Action                string `json:"action" description:"broker or passthrough." default:"broker" enum:"broker,passthrough"`
 	AuthorizationEndpoint string `json:"authorization_endpoint,omitempty" description:"Per-route OAuth authorization endpoint override."`
 	TokenEndpoint         string `json:"token_endpoint,omitempty" description:"Per-route OAuth token endpoint override."`
+	Scheme                string `json:"scheme,omitempty" description:"Upstream scheme override: http or https. Empty means no rewrite."`
 }
 
 func (c *tokenBrokerConfig) applyDefaults() {
@@ -89,6 +90,7 @@ type compiledBrokerRoute struct {
 	action                string // "broker" or "passthrough"
 	authorizationEndpoint string
 	tokenEndpoint         string
+	scheme                string // "http" or "https"; "" = no rewrite
 }
 
 // newBrokerRouter creates a router from the given routes.
@@ -115,16 +117,17 @@ func newBrokerRouter(defaultAction string, rules []tokenBrokerRoute) (*brokerRou
 			action:                action,
 			authorizationEndpoint: r.AuthorizationEndpoint,
 			tokenEndpoint:         r.TokenEndpoint,
+			scheme:                r.Scheme,
 		})
 	}
 	return &brokerRouter{routes: compiled, defaultAction: defaultAction}, nil
 }
 
-// resolve returns whether the given host should use the broker and the authorization/token endpoints if specified.
+// resolve returns whether the given host should use the broker, the
+// authorization/token endpoint overrides, and the upstream scheme override.
 // Port is stripped from the host before matching.
-// Returns (shouldBroker, authorizationEndpoint, tokenEndpoint) where shouldBroker is true if a route matches with action "broker"
-// or if no route matches and default is "broker".
-func (r *brokerRouter) resolve(host string) (bool, string, string) {
+// Returns (shouldBroker, authorizationEndpoint, tokenEndpoint, scheme).
+func (r *brokerRouter) resolve(host string) (bool, string, string, string) {
 	// Strip port if present
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
@@ -133,12 +136,12 @@ func (r *brokerRouter) resolve(host string) (bool, string, string) {
 	// Check for matching route
 	for _, entry := range r.routes {
 		if entry.glob.Match(host) {
-			return entry.action == "broker", entry.authorizationEndpoint, entry.tokenEndpoint
+			return entry.action == "broker", entry.authorizationEndpoint, entry.tokenEndpoint, entry.scheme
 		}
 	}
 
 	// No route matched, use default action
-	return r.defaultAction == "broker", "", ""
+	return r.defaultAction == "broker", "", "", ""
 }
 
 // TokenBroker performs token brokering for outbound requests.
@@ -222,7 +225,7 @@ func (p *TokenBroker) OnRequest(ctx context.Context, pctx *pipeline.Context) pip
 	host := pctx.Host
 
 	// Check if this should be a broker request and get authorization/token endpoints
-	shouldBroker, authorizationEndpoint, tokenEndpoint := p.router.resolve(host)
+	shouldBroker, authorizationEndpoint, tokenEndpoint, routeScheme := p.router.resolve(host)
 
 	if !shouldBroker {
 		// Not a broker route, continue with Skip invocation
@@ -230,8 +233,17 @@ func (p *TokenBroker) OnRequest(ctx context.Context, pctx *pipeline.Context) pip
 		return pipeline.Action{Type: pipeline.Continue}
 	}
 
-	// Derive server URL for logging
-	scheme := pctx.Scheme
+	// Apply upstream scheme override from the matched route.
+	if routeScheme != "" {
+		pctx.UpstreamScheme = routeScheme
+	}
+
+	// Derive server URL: prefer the route scheme override, then the
+	// agent's inbound scheme, then default to "http".
+	scheme := pctx.UpstreamScheme
+	if scheme == "" {
+		scheme = pctx.Scheme
+	}
 	if scheme == "" {
 		scheme = "http"
 	}
@@ -307,17 +319,25 @@ func (p *TokenBroker) OnRequest(ctx context.Context, pctx *pipeline.Context) pip
 		"broker_url", brokerURL)
 
 	// Record successful token replacement
+	successDetails := makeBrokerDetails(brokerURL, serverURL, authorizationEndpoint, tokenEndpoint)
+	if routeScheme != "" {
+		successDetails["upstream_scheme"] = routeScheme
+	}
 	pctx.Record(pipeline.Invocation{
 		Action:  pipeline.ActionModify,
 		Reason:  "token_replaced",
-		Details: makeBrokerDetails(brokerURL, serverURL, authorizationEndpoint, tokenEndpoint),
+		Details: successDetails,
 	})
 	return pipeline.Action{Type: pipeline.Continue}
 }
 
 func (p *TokenBroker) OnResponse(ctx context.Context, pctx *pipeline.Context) pipeline.Action {
-	// Derive server URL for logging
-	scheme := pctx.Scheme
+	// Derive server URL for logging: prefer UpstreamScheme set during
+	// OnRequest, then agent's inbound scheme, then default to "http".
+	scheme := pctx.UpstreamScheme
+	if scheme == "" {
+		scheme = pctx.Scheme
+	}
 	if scheme == "" {
 		scheme = "http"
 	}

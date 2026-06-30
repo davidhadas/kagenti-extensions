@@ -111,6 +111,7 @@ func TestLoadRoutes(t *testing.T) {
 	content := `- host: "auth-target"
   target_audience: "auth-target"
   token_scopes: "openid"
+  scheme: "https"
 - host: "internal"
   action: "passthrough"
 `
@@ -127,6 +128,51 @@ func TestLoadRoutes(t *testing.T) {
 	}
 	if routes[0].Audience != "auth-target" {
 		t.Errorf("route[0].Audience = %q, want %q", routes[0].Audience, "auth-target")
+	}
+	if routes[0].Scheme != "https" {
+		t.Errorf("route[0].Scheme = %q, want %q", routes[0].Scheme, "https")
+	}
+}
+
+func TestResolve_SchemeField(t *testing.T) {
+	r, _ := NewRouter("passthrough", []Route{
+		{Host: "secure-svc", Audience: "secure", Scheme: "https"},
+	})
+	resolved := r.Resolve("secure-svc")
+	if resolved == nil {
+		t.Fatal("expected match")
+	}
+	if resolved.Scheme != "https" {
+		t.Errorf("scheme = %q, want %q", resolved.Scheme, "https")
+	}
+}
+
+func TestResolve_SchemeOmitted(t *testing.T) {
+	r, _ := NewRouter("passthrough", []Route{
+		{Host: "plain-svc", Audience: "plain"},
+	})
+	resolved := r.Resolve("plain-svc")
+	if resolved == nil {
+		t.Fatal("expected match")
+	}
+	if resolved.Scheme != "" {
+		t.Errorf("scheme = %q, want empty string (no rewrite)", resolved.Scheme)
+	}
+}
+
+func TestResolve_PassthroughWithScheme(t *testing.T) {
+	r, _ := NewRouter("passthrough", []Route{
+		{Host: "legacy-svc", Action: "passthrough", Scheme: "https"},
+	})
+	resolved := r.Resolve("legacy-svc")
+	if resolved == nil {
+		t.Fatal("expected match")
+	}
+	if !resolved.Passthrough {
+		t.Error("expected Passthrough=true")
+	}
+	if resolved.Scheme != "https" {
+		t.Errorf("scheme = %q, want %q", resolved.Scheme, "https")
 	}
 }
 

@@ -134,7 +134,8 @@ type tokenExchangeRoute struct {
 	Action         string `json:"action"`
 	// Passthrough is accepted for backwards compatibility with the
 	// pre-migration routes.yaml shape (Action:"passthrough" is preferred).
-	Passthrough bool `json:"passthrough"`
+	Passthrough bool   `json:"passthrough"`
+	Scheme      string `json:"scheme"` // "http" or "https"; "" = no rewrite
 }
 
 func (c *tokenExchangeConfig) applyDefaults() {
@@ -554,6 +555,7 @@ func buildRouterFrom(defaultPolicy string, routes tokenExchangeRoutes) (*routing
 			Scopes:        rc.TokenScopes,
 			TokenEndpoint: rc.TokenURL,
 			Action:        action,
+			Scheme:        rc.Scheme,
 		})
 	}
 	return routing.NewRouter(defaultPolicy, rules)
@@ -671,6 +673,12 @@ func (p *TokenExchange) OnRequest(ctx context.Context, pctx *pipeline.Context) p
 	}
 
 	result := p.inner.HandleOutbound(ctx, authHeader, host)
+
+	// Apply upstream scheme override from the matched route.
+	if result.Scheme != "" {
+		pctx.UpstreamScheme = result.Scheme
+	}
+
 	// Record an Auth.Outbound entry on every branch so operators have
 	// full outbound audit in the session stream — matches the inbound
 	// side's recording of allow/deny/bypass and mirrors the claim in the
@@ -714,6 +722,7 @@ func (p *TokenExchange) OnRequest(ctx context.Context, pctx *pipeline.Context) p
 				"target_audience":  result.TargetAudience,
 				"requested_scopes": result.RequestedScopes,
 				"cache_hit":        boolStr(result.CacheHit),
+				"upstream_scheme":  result.Scheme,
 			},
 		})
 	default:
@@ -729,8 +738,9 @@ func (p *TokenExchange) OnRequest(ctx context.Context, pctx *pipeline.Context) p
 			Action: pipeline.ActionSkip,
 			Reason: reason,
 			Details: map[string]string{
-				"route_matched": boolStr(result.RouteMatched),
-				"route_host":    host,
+				"route_matched":   boolStr(result.RouteMatched),
+				"route_host":      host,
+				"upstream_scheme": result.Scheme,
 			},
 		})
 	}

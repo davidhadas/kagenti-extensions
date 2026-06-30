@@ -631,3 +631,100 @@ func TestValidate_UnknownProviderRejected(t *testing.T) {
 		t.Fatal("expected error for unknown provider, got nil")
 	}
 }
+
+// --- Scheme override ---
+
+func TestTokenExchange_SchemeOverride_SetsUpstreamScheme(t *testing.T) {
+	exchangeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "new-token", "token_type": "Bearer", "expires_in": 300,
+		})
+	}))
+	defer exchangeSrv.Close()
+
+	p := NewTokenExchange()
+	raw := []byte(`{
+	  "token_url":"` + exchangeSrv.URL + `",
+	  "default_policy":"passthrough",
+	  "identity":{"type":"client-secret","client_id":"agent","client_secret":"secret"},
+	  "routes":{"rules":[{"host":"secure-svc","target_audience":"secure-aud","scheme":"https"}]}
+	}`)
+	if err := p.Configure(raw); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	pctx := &pipeline.Context{
+		Direction: pipeline.Outbound,
+		Host:      "secure-svc",
+		Headers:   http.Header{"Authorization": []string{"Bearer user-token"}},
+	}
+	action := invokeOnRequest(p, pctx)
+	if action.Type != pipeline.Continue {
+		t.Fatalf("got %v, want Continue", action.Type)
+	}
+	if pctx.UpstreamScheme != "https" {
+		t.Errorf("UpstreamScheme = %q, want %q", pctx.UpstreamScheme, "https")
+	}
+	if len(pctx.Extensions.Invocations.Outbound) != 1 {
+		t.Fatalf("expected one invocation, got %d", len(pctx.Extensions.Invocations.Outbound))
+	}
+	if pctx.Extensions.Invocations.Outbound[0].Details["upstream_scheme"] != "https" {
+		t.Errorf("Details[upstream_scheme] = %q, want %q",
+			pctx.Extensions.Invocations.Outbound[0].Details["upstream_scheme"], "https")
+	}
+}
+
+func TestTokenExchange_SchemeOverride_OmittedLeavesUpstreamSchemeEmpty(t *testing.T) {
+	exchangeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"access_token": "new-token", "token_type": "Bearer", "expires_in": 300,
+		})
+	}))
+	defer exchangeSrv.Close()
+
+	p := NewTokenExchange()
+	raw := []byte(`{
+	  "token_url":"` + exchangeSrv.URL + `",
+	  "default_policy":"passthrough",
+	  "identity":{"type":"client-secret","client_id":"agent","client_secret":"secret"},
+	  "routes":{"rules":[{"host":"plain-svc","target_audience":"plain-aud"}]}
+	}`)
+	if err := p.Configure(raw); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	pctx := &pipeline.Context{
+		Direction: pipeline.Outbound,
+		Host:      "plain-svc",
+		Headers:   http.Header{"Authorization": []string{"Bearer user-token"}},
+	}
+	invokeOnRequest(p, pctx)
+	if pctx.UpstreamScheme != "" {
+		t.Errorf("UpstreamScheme = %q, want empty string (no rewrite)", pctx.UpstreamScheme)
+	}
+}
+
+func TestTokenExchange_SchemeOverride_InlineRuleWiresThrough(t *testing.T) {
+	p := NewTokenExchange()
+	raw := []byte(`{
+	  "token_url":"http://unused",
+	  "default_policy":"passthrough",
+	  "identity":{"type":"client-secret","client_id":"agent","client_secret":"secret"},
+	  "routes":{"rules":[{"host":"legacy-svc","action":"passthrough","scheme":"https"}]}
+	}`)
+	if err := p.Configure(raw); err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	pctx := &pipeline.Context{
+		Direction: pipeline.Outbound,
+		Host:      "legacy-svc",
+		Headers:   http.Header{"Authorization": []string{"Bearer token"}},
+	}
+	action := invokeOnRequest(p, pctx)
+	if action.Type != pipeline.Continue {
+		t.Fatalf("got %v, want Continue", action.Type)
+	}
+	if pctx.UpstreamScheme != "https" {
+		t.Errorf("UpstreamScheme = %q, want %q", pctx.UpstreamScheme, "https")
+	}
+}

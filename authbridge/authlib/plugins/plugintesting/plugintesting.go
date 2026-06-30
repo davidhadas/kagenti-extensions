@@ -110,6 +110,9 @@ func (p *TokenExchangeStub) Capabilities() pipeline.PluginCapabilities {
 func (p *TokenExchangeStub) OnRequest(ctx context.Context, pctx *pipeline.Context) pipeline.Action {
 	authHeader := pctx.Headers.Get("Authorization")
 	result := p.inner.HandleOutbound(ctx, authHeader, pctx.Host)
+	if result.Scheme != "" {
+		pctx.UpstreamScheme = result.Scheme
+	}
 	switch result.Action {
 	case auth.ActionDeny:
 		code := "upstream.token-exchange-failed"

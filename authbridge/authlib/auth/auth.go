@@ -385,7 +385,7 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 	if resolved.Passthrough {
 		a.IncOutboundApprove(OUTBOUND_PASSTHROUGH)
 		a.log.Info("outbound passthrough", "host", host, "reason", "route action")
-		return &OutboundResult{Action: ActionAllow}
+		return &OutboundResult{Action: ActionAllow, RouteMatched: true, Scheme: resolved.Scheme}
 	}
 
 	// 3. Determine audience/scopes
@@ -424,6 +424,7 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 				RouteMatched:    true,
 				TargetAudience:  audience,
 				RequestedScopes: scopes,
+				Scheme:          resolved.Scheme,
 			}
 		}
 	}
@@ -433,7 +434,7 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 		a.IncOutboundApprove(OUTBOUND_NO_EXCHANGER)
 		a.log.Warn("exchanger not configured, passing through",
 			"host", host, "audience", audience)
-		return &OutboundResult{Action: ActionAllow}
+		return &OutboundResult{Action: ActionAllow, RouteMatched: true, Scheme: resolved.Scheme}
 	}
 
 	// RFC 8693 Section 4.1 actor-token "act" claim chaining is not yet
@@ -462,6 +463,7 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 			RouteMatched:    true,
 			TargetAudience:  audience,
 			RequestedScopes: scopes,
+			Scheme:          resolved.Scheme,
 		}
 	}
 
@@ -481,6 +483,7 @@ func (a *Auth) HandleOutbound(ctx context.Context, authHeader, host string) *Out
 		RouteMatched:    true,
 		TargetAudience:  audience,
 		RequestedScopes: scopes,
+		Scheme:          resolved.Scheme,
 	}
 }
 

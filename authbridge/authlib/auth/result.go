@@ -51,4 +51,5 @@ type OutboundResult struct {
 	RouteMatched    bool   // true when Router.Resolve returned a non-nil route (regardless of action)
 	TargetAudience  string // resolved route's audience (or deriver's output); empty on passthrough
 	RequestedScopes string // resolved route's scopes, raw space-separated; empty on passthrough
+	Scheme          string // upstream scheme override from matched route ("http" or "https"); "" = no rewrite
 }

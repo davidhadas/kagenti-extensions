@@ -636,6 +636,118 @@ func (p *schemeCapturePlugin) OnResponse(_ context.Context, _ *pipeline.Context)
 	return pipeline.Action{Type: pipeline.Continue}
 }
 
+// upstreamSchemeCapturePlugin captures pctx.UpstreamScheme as set by
+// an earlier token-exchange plugin in the pipeline. It must be placed
+// after token-exchange so it reads the already-written value.
+type upstreamSchemeCapturePlugin struct {
+	got string
+}
+
+func (p *upstreamSchemeCapturePlugin) Name() string { return "upstream-scheme-capture" }
+func (p *upstreamSchemeCapturePlugin) Capabilities() pipeline.PluginCapabilities {
+	return pipeline.PluginCapabilities{}
+}
+func (p *upstreamSchemeCapturePlugin) OnRequest(_ context.Context, pctx *pipeline.Context) pipeline.Action {
+	p.got = pctx.UpstreamScheme
+	return pipeline.Action{Type: pipeline.Continue}
+}
+func (p *upstreamSchemeCapturePlugin) OnResponse(_ context.Context, _ *pipeline.Context) pipeline.Action {
+	return pipeline.Action{Type: pipeline.Continue}
+}
+
+// TestForwardProxy_SchemeOverride_HTTPtoHTTPS verifies that when the
+// token-exchange route carries scheme:https, pctx.UpstreamScheme is set
+// to "https" by the token-exchange plugin, which the listener then applies
+// to r.URL.Scheme before dialling upstream.
+func TestForwardProxy_SchemeOverride_HTTPtoHTTPS(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	backendURL, _ := url.Parse(backend.URL)
+	router, _ := routing.NewRouter("passthrough", []routing.Route{
+		{Host: backendURL.Hostname(), Audience: "test-aud", Scheme: "https"},
+	})
+	// Pre-populate the cache so token-exchange returns ActionReplaceToken
+	// (Continue) without needing a real IdP, allowing the capturer to run.
+	c := cache.New()
+	c.Set("agent-token", "test-aud", "exchanged-token", 5*time.Minute)
+	a := auth.New(auth.Config{Router: router, Cache: c})
+
+	capturer := &upstreamSchemeCapturePlugin{}
+	p, err := plugintesting.BuildPipeline([]pipeline.Plugin{
+		plugintesting.NewTokenExchange(a),
+		capturer,
+	})
+	if err != nil {
+		t.Fatalf("BuildPipeline: %v", err)
+	}
+	srv := &Server{
+		OutboundPipeline: pipeline.NewHolder(p),
+		Client:           http.DefaultClient,
+	}
+	proxy := httptest.NewServer(srv.Handler())
+	defer proxy.Close()
+
+	req, _ := http.NewRequest("GET", backend.URL+"/", nil)
+	req.Header.Set("Authorization", "Bearer agent-token")
+	proxyClient := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(mustParseURL(proxy.URL))},
+	}
+	// The request may fail (exchanger is a stub) — we only care about the
+	// scheme captured before the dial.
+	resp, _ := proxyClient.Do(req)
+	if resp != nil {
+		resp.Body.Close()
+	}
+
+	if capturer.got != "https" {
+		t.Errorf("pctx.UpstreamScheme = %q, want https", capturer.got)
+	}
+}
+
+// TestForwardProxy_SchemeOverride_NoRoute verifies that without a
+// matching route pctx.UpstreamScheme stays empty and the scheme is
+// forwarded unchanged.
+func TestForwardProxy_SchemeOverride_NoRoute(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	router, _ := routing.NewRouter("passthrough", []routing.Route{})
+	a := auth.New(auth.Config{Router: router})
+	capturer := &upstreamSchemeCapturePlugin{}
+	p, err := plugintesting.BuildPipeline([]pipeline.Plugin{
+		plugintesting.NewTokenExchange(a),
+		capturer,
+	})
+	if err != nil {
+		t.Fatalf("BuildPipeline: %v", err)
+	}
+	srv := &Server{
+		OutboundPipeline: pipeline.NewHolder(p),
+		Client:           http.DefaultClient,
+	}
+	proxy := httptest.NewServer(srv.Handler())
+	defer proxy.Close()
+
+	req, _ := http.NewRequest("GET", backend.URL+"/", nil)
+	proxyClient := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(mustParseURL(proxy.URL))},
+	}
+	resp, err := proxyClient.Do(req)
+	if err != nil {
+		t.Fatalf("proxy request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	if capturer.got != "" {
+		t.Errorf("pctx.UpstreamScheme = %q, want empty string (no override)", capturer.got)
+	}
+}
+
 // TestForwardProxy_PopulatesSchemeFromRequestURL verifies the
 // forward-proxy listener surfaces r.URL.Scheme on pctx. For HTTP
 // forward proxies the agent's request line carries the full URL

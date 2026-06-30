@@ -358,6 +358,55 @@ func TestHandleOutbound_PerRouteTokenEndpoint(t *testing.T) {
 	}
 }
 
+func TestHandleOutbound_SchemePropagatesToResult(t *testing.T) {
+	srv := newTestExchangeServer(t)
+	defer srv.Close()
+
+	router, _ := routing.NewRouter("passthrough", []routing.Route{
+		{Host: "secure-svc", Audience: "secure-aud", Scheme: "https"},
+	})
+	exchanger := exchange.NewClient(srv.URL, &exchange.ClientSecretAuth{
+		ClientID: "agent", ClientSecret: "secret",
+	})
+	a := New(Config{Router: router, Exchanger: exchanger, Cache: cache.New()})
+
+	result := a.HandleOutbound(context.Background(), "Bearer user-token", "secure-svc")
+	if result.Action != ActionReplaceToken {
+		t.Fatalf("expected replace_token, got %s", result.Action)
+	}
+	if result.Scheme != "https" {
+		t.Errorf("Scheme = %q, want %q", result.Scheme, "https")
+	}
+}
+
+func TestHandleOutbound_SchemePassthroughRoute(t *testing.T) {
+	router, _ := routing.NewRouter("passthrough", []routing.Route{
+		{Host: "legacy-svc", Action: "passthrough", Scheme: "https"},
+	})
+	a := New(Config{Router: router})
+	result := a.HandleOutbound(context.Background(), "Bearer token", "legacy-svc")
+	if result.Action != ActionAllow {
+		t.Fatalf("expected allow, got %s", result.Action)
+	}
+	if result.Scheme != "https" {
+		t.Errorf("Scheme = %q, want %q", result.Scheme, "https")
+	}
+}
+
+func TestHandleOutbound_SchemeOmitted(t *testing.T) {
+	router, _ := routing.NewRouter("passthrough", []routing.Route{
+		{Host: "plain-svc", Audience: "plain-aud"},
+	})
+	// Use cache hit to avoid a real exchange call.
+	c := cache.New()
+	c.Set("user-token", "plain-aud", "cached", 5*time.Minute)
+	a2 := New(Config{Router: router, Cache: c})
+	result := a2.HandleOutbound(context.Background(), "Bearer user-token", "plain-svc")
+	if result.Scheme != "" {
+		t.Errorf("Scheme = %q, want empty string (no rewrite)", result.Scheme)
+	}
+}
+
 // --- Stats Tests ---
 
 func TestNewStats(t *testing.T) {

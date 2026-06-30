@@ -119,6 +119,14 @@ type Context struct {
 	Identity Identity     // nil before an auth plugin runs
 	Session  *SessionView // nil unless session tracking is enabled
 
+	// UpstreamScheme, when non-empty, overrides the URL scheme the forward
+	// proxy uses for the outbound dial ("http" or "https"). Set by the
+	// token-exchange plugin when the matched route carries a scheme field.
+	// The listener applies it after the pipeline runs, just before
+	// client.Do(). Empty means no override — the listener keeps whatever
+	// scheme the agent sent.
+	UpstreamScheme string
+
 	// OutboundSessionID pins the session bucket resolved when the
 	// outbound REQUEST event was recorded, so the paired RESPONSE event
 	// lands in the same session. recordOutboundResponseEvent reuses it
