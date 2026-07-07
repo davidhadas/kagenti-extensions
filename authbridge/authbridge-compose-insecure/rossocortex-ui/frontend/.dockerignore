@@ -1,0 +1,8 @@
+# Never copy host build artifacts or deps into the image build context.
+# The Dockerfile runs `npm ci` + `npm run build` itself; copying the host's
+# node_modules/ or dist/ over that (via `COPY . .`) shadows the fresh build
+# with stale output and pulls in a possibly-broken host node_modules.
+node_modules
+dist
+.vite
+npm-debug.log*

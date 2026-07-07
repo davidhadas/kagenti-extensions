@@ -1,0 +1,143 @@
+# git-issue agent — self-contained unit.
+#
+# This is the ONLY file that defines the git-issue agent: its authbridge
+# instance, the agent container itself, and a one-shot registrar that
+# advertises the agent to the UI.
+#
+# ⚠ INSECURE: the agent runs on the `shared` network alongside its authbridge
+# sidecar. Traffic goes through the sidecar only because the agent is CONFIGURED
+# to (HTTP_PROXY for egress; callers use the reverse-proxy address for inbound)
+# — cooperative, NOT enforced. The agent can bypass the sidecar (direct egress
+# to shared; agent:8000 is directly reachable). Not a security boundary.
+#
+# Included from ../docker-compose.yaml via `include:`. To add another agent,
+# copy this file, rename the three services, adjust the env blocks + published
+# ports, and add the new file to the root `include:` list.
+#
+# Topology:
+#   shared:
+#     agent-git-issue        (directly reachable on shared)
+#     authbridge-git-issue   (cooperative gateway in/out)
+#   Inbound:  shared → authbridge-git-issue:8080 → agent-git-issue:8000
+#             (agent-git-issue:8000 ALSO directly reachable — bypassable)
+#   Outbound: agent → authbridge-git-issue:8081 (HTTP_PROXY) → shared → tools
+#             (agent can ALSO reach shared directly — bypassable)
+
+# YAML anchor: the agent's identity, declared once, consumed by both the
+# authbridge instance (via ${AGENT_ID}) and the registrar (descriptor fields).
+x-agent-identity: &agent-identity
+  AGENT_ID: "git-issue-agent"
+  AGENT_DESCRIPTION: "Answer queries about GitHub issues"
+
+# NOTE: no networks: block. All services run on `shared`, which is declared once
+# in ../docker-compose.yaml and referenced by name in the services below.
+# Redeclaring `shared` here (even as an empty value) makes podman-compose's file
+# merge fail with a dict-vs-null conflict; the same applies to the `registry`
+# volume (see bottom of file).
+
+services:
+
+  # ── authbridge sidecar ───────────────────────────────────────────────────
+  # On `shared` alongside the agent.
+  # Inbound:  receives on :8080 (shared), proxies to agent-git-issue:8000
+  # Outbound: receives on :8081 (shared), proxies to tools on shared
+  # Stats/session API: :9093/:9094 (shared)
+  authbridge-git-issue:
+    container_name: authbridge-git-issue
+    image: ghcr.io/kagenti/kagenti-extensions/authbridge:latest
+    command: ["--config", "/etc/authbridge/config.yaml"]
+    environment:
+      <<: *agent-identity
+      AGENT_NAME: "agent-git-issue"
+      AGENT_PORT: "8000"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    volumes:
+      # The shared authbridge config lives in the compose ROOT (one level up from
+      # agents/). The two ways this file gets combined resolve relative paths
+      # against DIFFERENT base dirs, so we anchor on ${COMPOSE_ROOT}:
+      #   - docker `include:` resolves against THIS file's dir (agents/) →
+      #     default ".." points at the compose root.
+      #   - podman-up.sh runs from the compose root and exports COMPOSE_ROOT="."
+      #     so the same entry resolves against the compose root too.
+      - ${COMPOSE_ROOT:-..}/authbridge-config.yaml:/etc/authbridge/config.yaml:ro
+      # broker-routes.yaml is no longer a static file — it is assembled from each
+      # tool's route fragment by broker-routes-assemble into the broker_routes
+      # volume, mounted here read-only. The plugin reads /etc/authproxy/broker-routes.yaml.
+      - broker_routes:/etc/authproxy:ro
+    networks:
+      - shared
+    depends_on:
+      agent-git-issue:
+        condition: service_started
+      # Wait for the assembled broker-routes.yaml to exist (assemble seeds an
+      # empty file first, so authbridge never sees a missing routes file).
+      broker-routes-assemble:
+        condition: service_completed_successfully
+    ports:
+      - "9000:8080"   # reverse proxy — only inbound entry point for the agent
+      - "9094:9094"   # session events API (abctl)
+      - "9093:9093"   # stats + config reload
+
+  # ── git-issue agent ──────────────────────────────────────────────────────
+  # On `shared`. Outbound uses HTTP_PROXY=http://authbridge-git-issue:8081 by
+  # configuration (cooperative — the agent could bypass it). Inbound is intended
+  # via authbridge-git-issue's reverse proxy, but agent-git-issue:8000 is also
+  # directly reachable on shared (bypassable). See the header.
+  agent-git-issue:
+    container_name: agent-git-issue
+    # Pre-built agent image from the agent-examples repo. Override
+    # GIT_ISSUE_AGENT_IMAGE to pin a tag or use a local build.
+    image: ${GIT_ISSUE_AGENT_IMAGE:-ghcr.io/kagenti/agent-examples/git_issue_agent:latest}
+    environment:
+      PORT: "8000"
+      LLM_API_BASE: "${LLM_API_BASE}"
+      LLM_API_KEY: "${LLM_API_KEY:-ollama}"
+      TASK_MODEL_ID: "${TASK_MODEL_ID:-ollama_chat/ibm/granite4:latest}"
+      # Forward proxy is authbridge on the shared network interface.
+      # HTTPS_PROXY is required for the OpenAI HTTPS call — httpx only tunnels
+      # HTTPS through a proxy when HTTPS_PROXY is set (HTTP_PROXY is http only).
+      HTTP_PROXY: "http://authbridge-git-issue:8081"
+      http_proxy: "http://authbridge-git-issue:8081"
+      HTTPS_PROXY: "http://authbridge-git-issue:8081"
+      https_proxy: "http://authbridge-git-issue:8081"
+      # github-mcp resolves via authbridge forward proxy (shared network).
+      MCP_URL: "http://github-mcp:8082/mcp"
+      MCP_TIMEOUT: "600"
+      # Disable CrewAI telemetry so telemetry.crewai.com calls don't add
+      # noise/latency.
+      OTEL_SDK_DISABLED: "true"
+      CREWAI_TELEMETRY: "false"
+    networks:
+      - shared
+
+  # ── registrar (self-registration) ─────────────────────────────────────────
+  # One-shot: writes this agent's descriptor into the shared `registry` volume
+  # so the UI backend discovers it. Runs, writes, exits. Including this agent
+  # file is what makes the agent appear in the UI — no central agent list.
+  registrar-git-issue:
+    container_name: registrar-git-issue
+    image: busybox
+    environment:
+      <<: *agent-identity
+      # The authbridge reverse-proxy service the UI routes chat to.
+      AGENT_ENDPOINT: "http://authbridge-git-issue:8080"
+    command:
+      - sh
+      - -c
+      - |
+        printf '{"name":"%s","description":"%s","url":"%s"}' \
+          "$$AGENT_ID" "$$AGENT_DESCRIPTION" "$$AGENT_ENDPOINT" \
+          > /registry/git-issue.json
+    volumes:
+      - registry:/registry
+    # The registrar only writes to the volume; it needs no network. But
+    # podman-compose assigns every service a --network-alias and errors if the
+    # service isn't on a bridge network ("--network-alias can only be set when
+    # the network mode is bridge"). Attaching it to `shared` satisfies that.
+    networks:
+      - shared
+    restart: "no"
+
+# NOTE: the `registry` volume is intentionally NOT declared here — it is defined
+# once in ../docker-compose.yaml and referenced by name in the registrar above.
+# (Redeclaring it breaks podman-compose's merge; see the networks note above.)

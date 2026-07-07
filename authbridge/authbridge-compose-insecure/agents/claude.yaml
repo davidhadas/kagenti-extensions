@@ -1,0 +1,103 @@
+# claude agent — self-contained unit.
+#
+# Same shape as agents/git-issue.yaml (see that file for rationale).
+# ⚠ INSECURE: the agent runs on `shared` alongside its authbridge sidecar;
+# traffic goes through the sidecar by configuration only (cooperative, not
+# enforced).
+#
+# This agent drives the Claude Code CLI headlessly (from
+# agent-examples/a2a/claude_agent). It uses NO MCP tool — it reaches the model
+# over HTTPS via the authbridge forward proxy (falls through to passthrough).
+# It authenticates with ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL (a LiteLLM /
+# Anthropic-compatible endpoint), NOT the LLM_API_* vars the other agents use.
+# Set those two in .env (see .env.example).
+#
+# Host ports are unique per agent: git-issue 9000/9093/9094, weather
+# 9001/9095/9096, claude 9002/9097/9098.
+
+x-agent-identity: &agent-identity
+  AGENT_ID: "claude-agent"
+  AGENT_DESCRIPTION: "General-purpose agent driving the Claude Code CLI"
+
+# NOTE: no networks: block — all services run on `shared`, declared in
+# ../docker-compose.yaml and referenced by name only.
+
+services:
+
+  # ── authbridge sidecar ───────────────────────────────────────────────────
+  authbridge-claude:
+    container_name: authbridge-claude
+    image: ghcr.io/kagenti/kagenti-extensions/authbridge:latest
+    command: ["--config", "/etc/authbridge/config.yaml"]
+    environment:
+      <<: *agent-identity
+      AGENT_NAME: "agent-claude"
+      AGENT_PORT: "8000"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    volumes:
+      - ${COMPOSE_ROOT:-..}/authbridge-config.yaml:/etc/authbridge/config.yaml:ro
+      - broker_routes:/etc/authproxy:ro
+    networks:
+      - shared
+    depends_on:
+      agent-claude:
+        condition: service_started
+      broker-routes-assemble:
+        condition: service_completed_successfully
+    ports:
+      - "9002:8080"   # reverse proxy — inbound entry point for the agent
+      - "9098:9094"   # session events API (abctl)
+      - "9097:9093"   # stats + config reload
+
+  # ── claude agent ─────────────────────────────────────────────────────────
+  agent-claude:
+    container_name: agent-claude
+    # Pre-built agent image from the agent-examples repo.
+    # Override CLAUDE_AGENT_IMAGE to pin a tag or use a local build.
+    image: ${CLAUDE_AGENT_IMAGE:-ghcr.io/kagenti/agent-examples/claude_agent:latest}
+    environment:
+      PORT: "8000"
+      HOST: "0.0.0.0"
+      # Anthropic / LiteLLM endpoint. ANTHROPIC_AUTH_TOKEN is REQUIRED; set it in
+      # .env. ANTHROPIC_BASE_URL empty → the CLI uses api.anthropic.com directly.
+      ANTHROPIC_AUTH_TOKEN: "${ANTHROPIC_AUTH_TOKEN}"
+      ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
+      ANTHROPIC_MODEL: "${ANTHROPIC_MODEL:-sonnet}"
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "${ANTHROPIC_DEFAULT_HAIKU_MODEL:-haiku}"
+      # Outbound (the model API call) goes through authbridge's forward proxy.
+      HTTP_PROXY: "http://authbridge-claude:8081"
+      http_proxy: "http://authbridge-claude:8081"
+      HTTPS_PROXY: "http://authbridge-claude:8081"
+      https_proxy: "http://authbridge-claude:8081"
+    volumes:
+      # Host directory bind-mounted into the agent container (read-write).
+      # ${HOME} is expanded by both docker-compose and podman-compose ("~" is
+      # NOT expanded inside compose YAML), so this resolves to ~/mounts/claude
+      # on the host regardless of which run method is used.
+      - ${HOME}/mounts/claude:/workspace:rw
+    networks:
+      - shared
+
+  # ── registrar (self-registration) ─────────────────────────────────────────
+  registrar-claude:
+    container_name: registrar-claude
+    image: busybox
+    environment:
+      <<: *agent-identity
+      AGENT_ENDPOINT: "http://authbridge-claude:8080"
+    command:
+      - sh
+      - -c
+      - |
+        printf '{"name":"%s","description":"%s","url":"%s"}' \
+          "$$AGENT_ID" "$$AGENT_DESCRIPTION" "$$AGENT_ENDPOINT" \
+          > /registry/claude.json
+    volumes:
+      - registry:/registry
+    networks:
+      - shared
+    restart: "no"
+
+# NOTE: `shared` / `registry` / `broker_routes` are declared once in
+# ../docker-compose.yaml and referenced here by name — never redeclared
+# (podman-compose merge dict-vs-null gotcha; see agents/git-issue.yaml).

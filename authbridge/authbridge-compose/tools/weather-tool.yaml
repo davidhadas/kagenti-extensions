@@ -1,0 +1,32 @@
+# weather-tool — self-contained tool unit (PASSTHROUGH tool: no OAuth).
+#
+# The weather MCP server (from agent-examples/mcp/weather_tool) calls the public
+# open-meteo.com API, which needs no authentication. So unlike github-mcp it
+# needs NO broker route and NO RESOURCE_CONFIG entry: outbound calls to it fall
+# through to the token-broker plugin's default `passthrough` policy unchanged.
+# That also means this tool file has no route registrar — just the server.
+#
+# To add an OAuth-requiring tool instead, model it on tools/github-mcp.yaml
+# (which ships a route-fragment registrar and needs a RESOURCE_CONFIG entry).
+
+services:
+
+  # ── Weather MCP Server (FastMCP, streamable_http at :8000/mcp) ──────────────
+  weather-tool-mcp:
+    container_name: weather-tool-mcp
+    # Pre-built tool image from the agent-examples repo.
+    # Override WEATHER_TOOL_IMAGE to pin a tag or use a local build.
+    image: ${WEATHER_TOOL_IMAGE:-ghcr.io/kagenti/agent-examples/weather_tool:latest}
+    environment:
+      PORT: "8000"
+      HOST: "0.0.0.0"
+      # OTEL default points at an in-cluster collector that doesn't exist here;
+      # leave it unset/needless — the tool tolerates export failures, but keep
+      # noise down. (No auth/keys: open-meteo is public.)
+    networks:
+      - shared
+    ports:
+      - "8083:8000"   # host:container — 8082 is taken by github-mcp
+
+# NOTE: `shared` network is declared in ../docker-compose.yaml and referenced
+# here by name. Do NOT redeclare it (podman-compose merge dict-vs-null gotcha).

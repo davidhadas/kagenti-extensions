@@ -1,0 +1,188 @@
+# authbridge-compose — Docker Compose sidecar demo
+#
+# This root file defines only the SHARED services and the list of agents.
+# Each agent (its internal network, its authbridge instance, and the agent
+# container itself) lives in its own file under agents/ and is pulled in via
+# `include:` below. That per-agent file is the single source of truth for the
+# agent; adding an agent means adding one file + one line to `include:`.
+#
+# Network isolation — enforced by Docker network topology:
+#
+#   shared network (defined here):
+#     github-mcp, token-broker, bundle-server, rossocortex-*
+#     + each agent's authbridge  (the only gateway into that agent context)
+#
+#   <agent>-internal network  (internal: true — no host gateway, per agent file):
+#     agent container        (isolated — no route to shared network)
+#     authbridge instance    (bridges internal ↔ shared)
+#
+#   Inbound:  external → shared → authbridge-<agent>:8080 → agent-<agent>:8000
+#             (agent:8000 unreachable from shared or host directly)
+#   Outbound: agent → authbridge-<agent>:8081 (HTTP_PROXY) → shared → tools
+#             (agent has no route to shared; authbridge is the only gateway)
+#
+# Agent discovery: each agent file has a one-shot `registrar` that writes the
+# agent's descriptor into the shared `registry` volume. The UI backend scans
+# that volume, so any included agent shows up in the UI automatically — there
+# is no hand-maintained agent list. The `include:` list IS the agent list.
+#
+#   docker compose up               # shared + every included agent
+#   (comment out an include line to disable that agent)
+#
+# podman-compose (unlike Docker Compose) does NOT support `include:`. Use the
+# ./podman-up.sh wrapper instead — it reads this same `include:` list and
+# replays each entry as a `-f` flag, so this file stays the single source of
+# truth for both tools:
+#   ./podman-up.sh up --build       # equivalent under podman
+#
+# NOTE: authbridge runs as a normal container (no network_mode: service:*) so
+# it can join BOTH the shared and the agent-internal networks — network_mode
+# and networks: are mutually exclusive in Docker Compose.
+
+include:
+  # One line per agent. Each file is self-contained (own network + authbridge
+  # + agent + registrar). Add a line here to enable a new agent.
+  - agents/git-issue.yaml
+  - agents/weather.yaml
+  - agents/claude.yaml
+
+  # Tools: one file per tool (its MCP server + a registrar that publishes the
+  # tool's AuthBridge broker-route into the broker_routes volume). Add a line
+  # here to enable a new tool. (OAuth tools also need their scopes added to
+  # RESOURCE_CONFIG on the token-broker service below — the one central edit.
+  # Passthrough tools like weather-tool need neither a route nor RESOURCE_CONFIG.)
+  - tools/github-mcp.yaml
+  - tools/weather-tool.yaml
+
+networks:
+  shared:
+    driver: bridge
+
+volumes:
+  # Agent registry: each agent's registrar writes <agent>.json here; the UI
+  # backend (rossocortex-backend) reads it to build the live agent list.
+  registry:
+
+  # Broker-route registry: each tool's registrar writes a <tool>.frag.yaml route
+  # fragment here; broker-routes-assemble concatenates them into
+  # broker-routes.yaml, which each agent's authbridge reads.
+  broker_routes:
+
+
+services:
+
+  # ════════════════════════════════════════════════════════════════════════════
+  # SHARED SERVICES (no profile — always start)
+  # ════════════════════════════════════════════════════════════════════════════
+
+  # (The github-mcp MCP server moved to tools/github-mcp.yaml — see include:.)
+
+  # ── Broker-routes assembler ─────────────────────────────────────────────────
+  # One-shot: assembles the single broker-routes.yaml that every agent's
+  # authbridge reads, from the per-tool *.frag.yaml fragments each tool registrar
+  # dropped into the broker_routes volume. Seeds an EMPTY file first so the file
+  # always exists (authbridge errors if its routes file is set-but-missing), then
+  # appends every fragment. Agents depend_on this so they never boot first.
+  # Route order across tools is non-deterministic, but matching is first-match by
+  # host glob, so distinct tool hosts are order-independent.
+  broker-routes-assemble:
+    container_name: broker-routes-assemble
+    image: busybox
+    command:
+      - sh
+      - -c
+      - |
+        : > /routes/broker-routes.yaml
+        for f in /routes/*.frag.yaml; do
+          [ -f "$$f" ] && cat "$$f" >> /routes/broker-routes.yaml
+        done
+        echo "assembled broker-routes.yaml:"; cat /routes/broker-routes.yaml
+    volumes:
+      - broker_routes:/routes
+    # Bridge network only to satisfy podman-compose's --network-alias requirement.
+    networks:
+      - shared
+    # Run after each tool's registrar has written its fragment. List every
+    # tool's registrar here (this is a small central touch-point alongside the
+    # include: list and RESOURCE_CONFIG). If a registrar hasn't run yet, assemble
+    # still produces a valid (possibly incomplete) file; re-run to pick up more.
+    depends_on:
+      registrar-tool-github-mcp:
+        condition: service_completed_successfully
+    restart: "no"
+
+  # ── Token Broker (HITL OAuth) ────────────────────────────────────────────────
+  token-broker:
+    container_name: token-broker
+    build:
+      context: ${CODE_DIR:-/Users/davidhadas/Code}/kagenti-operator/token-broker
+    environment:
+      TOKEN_BROKER_PORT: "8190"
+      OAUTH_CLIENT_ID: "${GITHUB_OAUTH_CLIENT_ID}"
+      OAUTH_CLIENT_SECRET: "${GITHUB_OAUTH_CLIENT_SECRET}"
+      OAUTH_CALLBACK_URL: "${OAUTH_CALLBACK_URL:-http://localhost:8190/oauth/callback}"
+      ALLOWED_REDIRECT_HOSTS: "localhost"
+      OAUTH_AUTHORIZATION_ENDPOINT: "https://github.com/login/oauth/authorize"
+      OAUTH_TOKEN_ENDPOINT: "https://github.com/login/oauth/access_token"
+      RESOURCE_CONFIG: >-
+        {
+          "http://github-mcp:8082": {
+            "scopes": ["repo", "read:org", "read:user"],
+            "authorization_endpoint": "https://github.com/login/oauth/authorize",
+            "token_endpoint": "https://github.com/login/oauth/access_token"
+          }
+        }
+      TOKEN_BROKER_SESSION_TIMEOUT: "600s"
+    networks:
+      - shared
+    ports:
+      - "8190:8190"
+
+  # ── OPA Bundle Server ────────────────────────────────────────────────────────
+  bundle-server:
+    container_name: bundle-server
+    build:
+      context: ./bundle-server
+    environment:
+      POLICY_DIR: "/policies"
+      LISTEN_ADDR: ":8090"
+    volumes:
+      - ./bundle-server/policies:/policies:ro
+    networks:
+      - shared
+    ports:
+      - "8090:8090"
+
+  # ── RossoCortex frontend (React SPA served by nginx) ─────────────────────────
+  rossocortex-frontend:
+    container_name: rossocortex-frontend
+    build:
+      context: ./rossocortex-ui/frontend
+    networks:
+      - shared
+    depends_on:
+      - rossocortex-backend
+    ports:
+      - "3000:3000"
+
+  # ── RossoCortex backend (BFF — API proxy + token-broker bridge) ───────────────
+  rossocortex-backend:
+    container_name: rossocortex-backend
+    build:
+      context: ./rossocortex-ui/backend
+    environment:
+      # ENV=local permits the simulated-IdP alg:none tokens (Point 3 guard).
+      # Any other value makes the BFF refuse to start.
+      ENV: "local"
+      TOKEN_BROKER_URL: "http://token-broker:8190"
+      # Fallback only — the SPA registers /oauth-resume at session creation.
+      DEMO_REDIRECT_URL: "http://localhost:3000/oauth-resume"
+      # Agents are discovered from the shared `registry` volume (each agent's
+      # registrar writes its descriptor there) — no hand-maintained AGENTS list.
+      AGENTS_REGISTRY_DIR: "/registry"
+    depends_on:
+      - token-broker
+    networks:
+      - shared
+    volumes:
+      - registry:/registry:ro

@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/vite-env.d.ts","./src/components/applayout.tsx","./src/components/protectedroute.tsx","./src/contexts/authcontext.tsx","./src/pages/agentlistpage.tsx","./src/pages/callbackpage.tsx","./src/pages/chatpage.tsx","./src/pages/landingpage.tsx","./src/pages/oauthresumepage.tsx","./src/services/api.ts"],"version":"6.0.3"}

@@ -1,0 +1,66 @@
+# github-mcp tool — self-contained unit.
+#
+# This is the ONLY file that defines the github-mcp tool: the MCP server itself
+# and the AuthBridge broker-route that sends its traffic through the HITL OAuth
+# flow. Included from ../docker-compose.yaml via `include:` (or replayed as -f by
+# ../podman-up.sh under podman).
+#
+# To add another tool: copy this file, rename the server service + registrar,
+# change the route host/endpoints, add the new file to the root `include:` list,
+# and add the tool's OAuth scopes to RESOURCE_CONFIG on the token-broker service
+# in ../docker-compose.yaml (RESOURCE_CONFIG is the one remaining central edit).
+#
+# The route fragment is written into the shared `broker_routes` volume; the
+# `broker-routes-assemble` one-shot (root) concatenates every tool's fragment
+# into the single broker-routes.yaml that each agent's authbridge reads.
+
+services:
+
+  # ── Official GitHub MCP Server ──────────────────────────────────────────────
+  github-mcp:
+    container_name: github-mcp
+    image: ghcr.io/github/github-mcp-server:v1.1.2
+    command:
+      - "http"
+      - "--port=8082"
+      - "--base-url=http://localhost:8082"
+      - "--toolsets=default"
+    environment:
+      GITHUB_OAUTH_CLIENT_ID: "${GITHUB_OAUTH_CLIENT_ID}"
+      GITHUB_OAUTH_CLIENT_SECRET: "${GITHUB_OAUTH_CLIENT_SECRET}"
+    networks:
+      - shared
+    ports:
+      - "8082:8082"
+
+  # ── broker-route fragment registrar ─────────────────────────────────────────
+  # One-shot: writes this tool's AuthBridge broker-route into the shared
+  # `broker_routes` volume as a *.frag.yaml fragment. broker-routes-assemble
+  # (root) concatenates all fragments into broker-routes.yaml. The host matches
+  # the HTTP Host header agents use to reach this tool (short service name).
+  registrar-tool-github-mcp:
+    container_name: registrar-tool-github-mcp
+    image: busybox
+    command:
+      - sh
+      - -c
+      - |
+        cat > /routes/github-mcp.frag.yaml <<'EOF'
+        - host: "github-mcp"
+          action: broker
+          authorization_endpoint: "https://github.com/login/oauth/authorize"
+          token_endpoint: "https://github.com/login/oauth/access_token"
+        EOF
+    volumes:
+      - broker_routes:/routes
+    # Attached to the shared bridge network only to satisfy podman-compose's
+    # --network-alias requirement (it errors on a non-bridge network mode). The
+    # registrar just writes a file to the volume and exits.
+    networks:
+      - shared
+    restart: "no"
+
+# NOTE: the `shared` network and `broker_routes` volume are declared once in
+# ../docker-compose.yaml and referenced here by name. Do NOT redeclare them
+# (even as an empty value) — that makes podman-compose's file merge fail with a
+# dict-vs-null conflict (same gotcha documented in agents/git-issue.yaml).

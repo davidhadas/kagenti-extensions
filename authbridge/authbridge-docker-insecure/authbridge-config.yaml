@@ -1,0 +1,73 @@
+# AuthBridge proxy-sidecar config for authbridge-compose.
+#
+# Network isolation mode: authbridge and agent are separate containers on
+# git-issue-internal network. They communicate by service name, not localhost.
+#
+# This config is SHARED by every agent's authbridge instance. Per-agent values
+# (backend service name, agent id) come from each agent file's env block via
+# ${ENV_VAR} expansion — see reverse_proxy_backend and the opa agent_id below.
+#
+# Mode: proxy-sidecar
+#   Inbound  (:8080 on shared network): reverse proxy → ${AGENT_NAME}:${AGENT_PORT}
+#             Pipeline: a2a-parser → opa  (no JWT validation yet).
+#   Outbound (:8081 on <agent>-internal): forward proxy (HTTP_PROXY)
+#             Pipeline: mcp-parser → a2a-parser → opa → token-broker
+#
+# No SPIRE, no Keycloak.
+
+mode: proxy-sidecar
+
+listener:
+  reverse_proxy_addr: ":8080"
+  forward_proxy_addr: ":8081"
+  session_api_addr: ":9094"
+  # Agent is reached by service name on git-issue-internal network.
+  # AGENT_NAME env var allows reuse of this config for other agents.
+  reverse_proxy_backend: "http://${AGENT_NAME}:${AGENT_PORT}"
+
+session:
+  enabled: true
+
+stats:
+  address: ":9093"
+
+pipeline:
+  inbound:
+    plugins:
+      # 1. Classify inbound A2A messages (populates input.a2a for OPA).
+      - name: a2a-parser
+
+      # 2. OPA policy gate on inbound. The plugin selects the decision package
+      #    by direction, so this hits authbridge.inbound.request
+      #    (bundle-server/policies/inbound/request.rego — default allow).
+      #    To add JWT validation later, add a jwt-validation entry above this.
+      - name: opa
+        config:
+          bundle_url: "http://bundle-server:8090"
+          agent_id: "${AGENT_ID}"
+
+  outbound:
+    plugins:
+      # 1. Classify MCP tool calls (populates input.mcp for OPA).
+      - name: mcp-parser
+
+      # 2. Classify A2A messages (populates input.a2a for OPA).
+      - name: a2a-parser
+
+      # 3. OPA policy gate — fetches bundle from bundle-server at startup.
+      #    Default policy: allow all (outbound/request.rego).
+      #    Edit policies/ and restart bundle-server to change.
+      - name: opa
+        config:
+          bundle_url: "http://bundle-server:8090"
+          agent_id: "${AGENT_ID}"
+
+      # 4. HITL token broker — intercepts calls to GitHub MCP tool and
+      #    blocks until the user authorizes via the OAuth popup in demo-app.
+      #    Routes are loaded from broker-routes.yaml.
+      - name: token-broker
+        config:
+          broker_url: "http://token-broker:8190"
+          default_policy: passthrough
+          routes:
+            file: "/etc/authproxy/broker-routes.yaml"

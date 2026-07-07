@@ -1,0 +1,106 @@
+# weather agent — self-contained unit.
+#
+# Same shape as agents/git-issue.yaml (see that file for the full topology
+# rationale). Own internal network + authbridge instance + agent + registrar.
+# The weather agent calls the weather-tool-mcp tool, which is passthrough (no
+# OAuth), so no token-broker HITL flow is involved for this agent's tool calls.
+#
+# Host ports are unique per agent (git-issue uses 9000/9093/9094; weather uses
+# 9001/9095/9096) so multiple agents can run at once.
+
+x-agent-identity: &agent-identity
+  AGENT_ID: "weather-agent"
+  AGENT_DESCRIPTION: "Answer questions about the weather in a city"
+
+networks:
+  # `shared` is declared in ../docker-compose.yaml; referenced by name only.
+  weather-internal:
+    driver: bridge
+    internal: true
+
+services:
+
+  # ── authbridge sidecar ───────────────────────────────────────────────────
+  authbridge-weather:
+    container_name: authbridge-weather
+    image: ghcr.io/kagenti/kagenti-extensions/authbridge:latest
+    command: ["--config", "/etc/authbridge/config.yaml"]
+    environment:
+      <<: *agent-identity
+      AGENT_NAME: "agent-weather"
+      AGENT_PORT: "8000"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    volumes:
+      - ${COMPOSE_ROOT:-..}/authbridge-config.yaml:/etc/authbridge/config.yaml:ro
+      # Assembled broker-routes (shared volume). Weather's tool is passthrough,
+      # so no route matches — but authbridge still reads the file (it holds
+      # other tools' routes, e.g. github-mcp).
+      - broker_routes:/etc/authproxy:ro
+    networks:
+      - shared
+      - weather-internal
+    depends_on:
+      agent-weather:
+        condition: service_started
+      broker-routes-assemble:
+        condition: service_completed_successfully
+    ports:
+      - "9001:8080"   # reverse proxy — inbound entry point for the agent
+      - "9096:9094"   # session events API (abctl)
+      - "9095:9093"   # stats + config reload
+
+  # ── weather agent ──────────────────────────────────────────────────────────
+  agent-weather:
+    container_name: agent-weather
+    # Pre-built agent image from the agent-examples repo.
+    # Override WEATHER_AGENT_IMAGE to pin a tag or use a local build.
+    image: ${WEATHER_AGENT_IMAGE:-ghcr.io/kagenti/agent-examples/weather_service:latest}
+    environment:
+      PORT: "8000"
+      HOST: "0.0.0.0"
+      LLM_API_BASE: "${LLM_API_BASE}"
+      LLM_API_KEY: "${LLM_API_KEY:-ollama}"
+      # weather_service reads LLM_MODEL and talks to the OpenAI API directly, so
+      # the model must be a PLAIN name (no LiteLLM "openai/" prefix — that yields
+      # "invalid model ID"). Set WEATHER_LLM_MODEL in .env to override; do NOT
+      # reuse TASK_MODEL_ID (that carries a provider prefix for the CrewAI agent).
+      LLM_MODEL: "${WEATHER_LLM_MODEL:-gpt-4o-mini}"
+      OPENAI_API_KEY: "${LLM_API_KEY:-dummy}"
+      # Outbound goes through authbridge's forward proxy on the shared network.
+      HTTP_PROXY: "http://authbridge-weather:8081"
+      http_proxy: "http://authbridge-weather:8081"
+      HTTPS_PROXY: "http://authbridge-weather:8081"
+      https_proxy: "http://authbridge-weather:8081"
+      # The weather MCP tool (passthrough) resolves via the forward proxy.
+      MCP_URL: "http://weather-tool-mcp:8000/mcp"
+      # Disable OTEL export — the default endpoint is an in-cluster collector
+      # that doesn't exist here (and the agent has no external DNS anyway).
+      OTEL_SDK_DISABLED: "true"
+    networks:
+      - weather-internal
+
+  # ── registrar (self-registration) ─────────────────────────────────────────
+  # Writes this agent's descriptor into the shared `registry` volume so the UI
+  # backend discovers it. Same pattern as agents/git-issue.yaml.
+  registrar-weather:
+    container_name: registrar-weather
+    image: busybox
+    environment:
+      <<: *agent-identity
+      AGENT_ENDPOINT: "http://authbridge-weather:8080"
+    command:
+      - sh
+      - -c
+      - |
+        printf '{"name":"%s","description":"%s","url":"%s"}' \
+          "$$AGENT_ID" "$$AGENT_DESCRIPTION" "$$AGENT_ENDPOINT" \
+          > /registry/weather.json
+    volumes:
+      - registry:/registry
+    networks:
+      - weather-internal
+    restart: "no"
+
+# NOTE: `shared` / `registry` / `broker_routes` are declared once in
+# ../docker-compose.yaml and referenced here by name — never redeclared
+# (podman-compose merge dict-vs-null gotcha; see agents/git-issue.yaml).
